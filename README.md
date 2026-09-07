@@ -39,16 +39,25 @@ Pak Settings → Community plugins → zapnout **Lichess Blunder Trainer**.
 ## Build
 
 Bez závislostí. `main.js` = `vendor/chess.js` + `vendor/pieces.js` +
-`src/plugin.js` spojené dohromady:
+`src/plugin.js` spojené dohromady. Edituj `src/plugin.js`, ne `main.js`.
 
 ```
-node build.mjs
+node build.mjs            # jen sestaví main.js
+node build.mjs --deploy   # sestaví a nakopíruje do vaultu
 ```
 
-Edituj `src/plugin.js`, ne `main.js`.
+`--deploy` bere cíl z `deploy.local.json` (gitignored) nebo z env `LBT_DEPLOY_DIR`:
+
+```json
+{ "dir": "C:/…/<vault>/.obsidian/plugins/lichess-blunder-trainer" }
+```
+
+Nasadí `main.js`, `manifest.json`, `styles.css` a prázdný `.hotreload`. S
+pluginem [Hot Reload](https://github.com/pjeby/hot-reload) se změna projeví hned;
+jinak plugin ve vaultu vypni a zapni.
 
 - `vendor/chess.js` — [chess.js](https://github.com/jhlywa/chess.js) 1.0.0-beta.8 (BSD-2-Clause), legalita tahů, SAN ↔ UCI, detekce matu.
-- `vendor/pieces.js` — cburnett sada figur z [lichess-org/lila](https://github.com/lichess-org/lila) (GPL-2.0), inline SVG.
+- `vendor/pieces.js` — sady figur cburnett / merida / alpha / staunty z [lichess-org/lila](https://github.com/lichess-org/lila) (GPL-2.0), inline SVG.
 
 ## Syntaxe code bloku
 

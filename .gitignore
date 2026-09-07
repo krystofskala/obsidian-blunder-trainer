@@ -4,3 +4,4 @@ Thumbs.db
 *.log
 .obsidian/
 data.json
+deploy.local.json

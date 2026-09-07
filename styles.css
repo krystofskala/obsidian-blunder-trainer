@@ -1,0 +1,209 @@
+/* Lichess Blunder Trainer */
+
+.lbt {
+	/* barvy polí jsou RGB trojice (kvůli nastavitelné průhlednosti) */
+	--lbt-light: 235, 236, 208;
+	--lbt-dark: 119, 149, 86;
+	--lbt-board-alpha: 1;
+	--lbt-sel: rgba(255, 214, 0, 0.45);
+	--lbt-dest: rgba(20, 85, 30, 0.35);
+	--lbt-good: #3fb950;
+	--lbt-bad: #e5534b;
+	--lbt-hint: #d29922;
+	max-width: 480px;
+	margin: 0.5em 0;
+	font-size: var(--font-ui-small);
+}
+
+.lbt-title {
+	font-weight: 600;
+	margin-bottom: 0.4em;
+}
+
+.lbt-loading,
+.lbt-error {
+	padding: 0.6em 0.8em;
+	border-radius: 6px;
+	background: var(--background-secondary);
+}
+
+.lbt-error {
+	color: var(--text-error);
+	border: 1px solid var(--background-modifier-error);
+}
+
+/* board + arrow overlay share one square box */
+.lbt-stage {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 1 / 1;
+}
+
+.lbt-board {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	grid-template-columns: repeat(8, 1fr);
+	grid-template-rows: repeat(8, 1fr);
+	border-radius: 4px;
+	overflow: hidden;
+	user-select: none;
+}
+
+/* jemný rámeček, ať je průhledná deska čitelná na libovolném pozadí */
+.lbt-board::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.35);
+	pointer-events: none;
+}
+
+.lbt-sq {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+
+.lbt-light { background: rgba(var(--lbt-light), var(--lbt-board-alpha)); }
+.lbt-dark { background: rgba(var(--lbt-dark), var(--lbt-board-alpha)); }
+
+/* automatický motiv: pole nemají vlastní barvu, jen průsvitný závoj –
+   deska převezme barvu čehokoli pod sebou, i přes víc průhledných vrstev */
+.lbt.is-auto .lbt-light {
+	background: rgba(255, 255, 255, calc(var(--lbt-board-alpha) * 0.20));
+}
+.lbt.is-auto .lbt-dark {
+	background: rgba(0, 0, 0, calc(var(--lbt-board-alpha) * 0.40));
+}
+
+.lbt-piece {
+	width: 92%;
+	height: 92%;
+	pointer-events: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.lbt-piece svg { width: 100%; height: 100%; display: block; }
+
+/* unicode sada figur */
+.lbt-piece.lbt-uni {
+	font-size: 88%;
+	line-height: 1;
+}
+.lbt-piece.lbt-uni.lbt-uni-w {
+	color: #f7f7f7;
+	text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 1px #000;
+}
+.lbt-piece.lbt-uni.lbt-uni-b {
+	color: #1c1c1c;
+	text-shadow: 0 0 2px rgba(255, 255, 255, 0.6);
+}
+
+.lbt-sq.lbt-sel::before,
+.lbt-sq.lbt-from::before,
+.lbt-sq.lbt-to::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: var(--lbt-sel);
+}
+.lbt-sq.lbt-from::before,
+.lbt-sq.lbt-to::before {
+	background: rgba(255, 170, 0, 0.35);
+}
+
+.lbt-sq.lbt-dest::after {
+	content: "";
+	position: absolute;
+	width: 28%;
+	height: 28%;
+	border-radius: 50%;
+	background: var(--lbt-dest);
+}
+.lbt-sq.lbt-dest:has(.lbt-piece)::after {
+	width: 82%;
+	height: 82%;
+	background: transparent;
+	border: 4px solid var(--lbt-dest);
+}
+
+.lbt-sq.lbt-good { box-shadow: inset 0 0 0 4px var(--lbt-good); }
+.lbt-sq.lbt-bad { box-shadow: inset 0 0 0 4px var(--lbt-bad); }
+
+.lbt-arrows {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+	overflow: visible;
+}
+
+.lbt-promo {
+	position: absolute;
+	inset: 0;
+	z-index: 5;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	background: rgba(0, 0, 0, 0.55);
+}
+.lbt-promo-opt {
+	width: 18%;
+	aspect-ratio: 1;
+	background: var(--background-primary);
+	border-radius: 6px;
+	cursor: pointer;
+	padding: 4px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.lbt-promo-opt svg { width: 100%; height: 100%; }
+.lbt-promo-opt.lbt-uni {
+	font-size: 200%;
+	line-height: 1;
+	color: var(--text-normal);
+}
+
+.lbt-feedback {
+	margin: 0.5em 0 0.3em;
+	min-height: 1.4em;
+}
+.lbt-feedback.is-good { color: var(--lbt-good); }
+.lbt-feedback.is-bad { color: var(--lbt-bad); }
+.lbt-feedback.is-info { color: var(--text-muted); }
+
+.lbt-controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+
+.lbt-btn {
+	font-size: var(--font-ui-smaller);
+	padding: 4px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+.lbt-btn:disabled { opacity: 0.4; cursor: default; }
+.lbt-btn-hint { background: var(--lbt-hint); color: #1b1b1b; }
+.lbt-btn-link {
+	text-decoration: none;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+}
+
+.lbt-meta {
+	margin-top: 0.5em;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.5;
+}

@@ -1,0 +1,9 @@
+{
+	"id": "lichess-blunder-trainer",
+	"name": "Lichess Blunder Trainer",
+	"version": "0.2.0",
+	"minAppVersion": "1.4.0",
+	"description": "Interaktivní šachovnice v poznámkách: procvičuj své blundery z Lichess partií a Lichess puzzly – zahraj tah, zjisti jestli je správný, ukaž si řešení se šipkou a proklikej variantu.",
+	"author": "krystof.skala",
+	"isDesktopOnly": false
+}

@@ -405,26 +405,34 @@ class BoardWidget {
 
 		const stage = this.root.createDiv({ cls: "lbt-stage" });
 		this.elBoard = stage.createDiv({ cls: "lbt-board" });
-		this.elArrows = stage.createSvg("svg", { cls: "lbt-arrows" });
-		this.elArrows.setAttribute("viewBox", "0 0 8 8");
-		this.elArrows.setAttribute("preserveAspectRatio", "none");
-		const defs = this.elArrows.createSvg("defs");
-		const mk = (id, color) => {
-			const m = defs.createSvg("marker", {
-				attr: {
-					id,
-					viewBox: "0 0 10 10",
-					refX: "7",
-					refY: "5",
-					markerWidth: "4",
-					markerHeight: "4",
-					orient: "auto-start-reverse",
-				},
-			});
-			m.createSvg("path", { attr: { d: "M0,0 L10,5 L0,10 z", fill: color } });
-		};
-		mk("lbt-head-good", "var(--lbt-good, #3fb950)");
-		mk("lbt-head-hint", "var(--lbt-hint, #d29922)");
+
+		// Šipky jsou jen ozdoba – kdyby createSvg na nějakém webview zlobil,
+		// nesmí to shodit celou šachovnici.
+		this.elArrows = null;
+		try {
+			this.elArrows = stage.createSvg("svg", { cls: "lbt-arrows" });
+			this.elArrows.setAttribute("viewBox", "0 0 8 8");
+			this.elArrows.setAttribute("preserveAspectRatio", "none");
+			const defs = this.elArrows.createSvg("defs");
+			const mk = (id, color) => {
+				const m = defs.createSvg("marker", {
+					attr: {
+						id,
+						viewBox: "0 0 10 10",
+						refX: "7",
+						refY: "5",
+						markerWidth: "4",
+						markerHeight: "4",
+						orient: "auto-start-reverse",
+					},
+				});
+				m.createSvg("path", { attr: { d: "M0,0 L10,5 L0,10 z", fill: color } });
+			};
+			mk("lbt-head-good", "var(--lbt-good, #3fb950)");
+			mk("lbt-head-hint", "var(--lbt-hint, #d29922)");
+		} catch (e) {
+			this.elArrows = null;
+		}
 
 		this.elSquares = {};
 		this.elBoard.addEventListener("click", (e) => this.onBoardClick(e));
@@ -492,7 +500,9 @@ class BoardWidget {
 		for (const sq of Object.keys(this.elSquares)) {
 			const cell = this.elSquares[sq];
 			cell.empty();
-			cell.removeClass("lbt-sel", "lbt-dest", "lbt-good", "lbt-bad", "lbt-from", "lbt-to");
+			cell.removeClass(
+				"lbt-sel", "lbt-dest", "lbt-dest-cap", "lbt-good", "lbt-bad", "lbt-from", "lbt-to"
+			);
 		}
 		for (let r = 0; r < 8; r++) {
 			for (let f = 0; f < 8; f++) {
@@ -517,7 +527,9 @@ class BoardWidget {
 		if (this.selected && this.elSquares[this.selected]) {
 			this.elSquares[this.selected].addClass("lbt-sel");
 			for (const d of this.legalDests(this.selected)) {
-				if (this.elSquares[d]) this.elSquares[d].addClass("lbt-dest");
+				if (!this.elSquares[d]) continue;
+				this.elSquares[d].addClass("lbt-dest");
+				if (this.game.get(d)) this.elSquares[d].addClass("lbt-dest-cap");
 			}
 		}
 		// přetrvávající "blik" po tahu (přežije překreslení, mizí časovačem)
@@ -529,13 +541,14 @@ class BoardWidget {
 	}
 
 	renderArrows() {
+		if (!this.elArrows) return;
 		// vyčistit staré čáry (ne defs)
 		this.elArrows.querySelectorAll("line.lbt-arrow").forEach((n) => n.remove());
 		for (const a of this.arrows) {
 			if (!a.from || !a.to) continue;
 			const p1 = this.center(a.from);
 			const p2 = this.center(a.to);
-			const line = this.elArrows.createSvg("line", {
+			this.elArrows.createSvg("line", {
 				cls: "lbt-arrow",
 				attr: {
 					x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
@@ -548,7 +561,6 @@ class BoardWidget {
 					"marker-end": a.kind === "good" ? "url(#lbt-head-good)" : "url(#lbt-head-hint)",
 				},
 			});
-			line.dataset.k = a.kind;
 		}
 	}
 

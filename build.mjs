@@ -75,4 +75,21 @@ if (wantDeploy) {
 	// překlopí po každém buildu; bez toho pluginu je soubor neškodný
 	if (!existsSync(join(target, ".hotreload"))) writeFileSync(join(target, ".hotreload"), "");
 	console.log("nasazeno do: " + target);
+
+	// volitelně: doprovodný Templater user script do vaultu
+	let tdir = process.env.LBT_TEMPLATER_DIR || "";
+	if (!tdir && existsSync(join(here, "deploy.local.json"))) {
+		try {
+			tdir = JSON.parse(read("deploy.local.json")).templaterDir || "";
+		} catch (e) {
+			/* už zalogováno výše */
+		}
+	}
+	if (tdir) {
+		if (!existsSync(tdir)) mkdirSync(tdir, { recursive: true });
+		for (const f of ["lichessBlunderCallout.js", "lichess-config.example.json"]) {
+			copyFileSync(join(here, "extras", "templater", f), join(tdir, f));
+		}
+		console.log("templater script nasazen do: " + tdir);
+	}
 }

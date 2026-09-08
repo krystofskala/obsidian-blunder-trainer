@@ -3,5 +3,6 @@
 	"token": "",
 	"gamesPerFetch": 50,
 	"maxFetchRounds": 4,
-	"cacheHours": 12
+	"cacheHours": 12,
+	"blundersPerNote": 8
 }

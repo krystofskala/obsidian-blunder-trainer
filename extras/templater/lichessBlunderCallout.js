@@ -38,6 +38,7 @@ module.exports = async function lichessBlunderCallout(tp) {
 	const gamesPerFetch = config.gamesPerFetch || 50;
 	const maxFetchRounds = config.maxFetchRounds || 4;
 	const cacheHours = config.cacheHours != null ? config.cacheHours : 12;
+	const perNote = Math.max(1, config.blundersPerNote || 8);
 
 	const used = new Set((await readJson(app, STATE_PATH)) || []);
 	const cache = await readJson(app, CACHE_PATH);
@@ -51,25 +52,24 @@ module.exports = async function lichessBlunderCallout(tp) {
 		typeof cache.fetchedAt === "number" &&
 		Date.now() - cache.fetchedAt < cacheHours * 3600 * 1000;
 
-	let candidate = null;
+	let pool = [];
 
 	// 1) čerstvá cache → žádné volání sítě
 	if (cacheFresh) {
-		candidate = pickCandidate(cache.games, username, used);
+		pool = collectUnusedBlunders(cache.games, username, used);
 	}
 
-	// 2) jinak živě z Lichess (round 0 se uloží do cache)
-	if (!candidate) {
+	// 2) jinak (nebo když je v cache málo) živě z Lichess (round 0 se uloží do cache)
+	if (pool.length < perNote) {
 		let live;
 		try {
-			live = await pickFromLive(config, username, used, gamesPerFetch, maxFetchRounds);
+			live = await gatherFromLive(config, username, used, gamesPerFetch, maxFetchRounds, perNote);
 		} catch (err) {
-			// jiná než 429 chyba – zkus aspoň starou cache, ať den nezůstane prázdný
 			const fallback = cacheSameUser
-				? pickCandidate(cache.games, username, used)
-				: null;
-			if (fallback) {
-				candidate = fallback;
+				? collectUnusedBlunders(cache.games, username, used)
+				: [];
+			if (fallback.length) {
+				pool = fallback;
 			} else {
 				return warningCallout(`Chyba při komunikaci s Lichess API: ${err.message}`);
 			}
@@ -83,14 +83,14 @@ module.exports = async function lichessBlunderCallout(tp) {
 					games: live.round0Games,
 				});
 			}
-			candidate = live.candidate;
+			pool = dedupeByKey([...pool, ...live.pool]);
 
-			if (!candidate && live.hit429) {
+			if (!pool.length && live.hit429) {
 				const stale = cacheSameUser
-					? pickCandidate(cache.games, username, used)
-					: null;
-				if (stale) {
-					candidate = stale;
+					? collectUnusedBlunders(cache.games, username, used)
+					: [];
+				if (stale.length) {
+					pool = stale;
 				} else {
 					return infoCallout(
 						"Lichess právě omezuje požadavky (429). Zkus daily note otevřít znovu za chvíli. " +
@@ -101,33 +101,48 @@ module.exports = async function lichessBlunderCallout(tp) {
 		}
 	}
 
-	if (!candidate) {
+	if (!pool.length) {
 		return infoCallout(
 			"Nenašel jsem žádný nový blunder (buď nemáš analyzované partie, nebo jsou všechny už použité)."
 		);
 	}
 
-	used.add(candidate.key);
+	const picks = sampleN(pool, perNote);
+	for (const p of picks) used.add(p.key);
 	await writeJson(app, STATE_PATH, [...used]);
 
-	return renderBlock(candidate);
+	return renderBlock(picks);
 };
 
-function pickCandidate(games, username, used) {
-	const cands = collectUnusedBlunders(games, username, used);
-	if (cands.length === 0) return null;
-	return cands[Math.floor(Math.random() * cands.length)];
+function dedupeByKey(arr) {
+	const seen = new Set();
+	const out = [];
+	for (const c of arr) {
+		if (seen.has(c.key)) continue;
+		seen.add(c.key);
+		out.push(c);
+	}
+	return out;
 }
 
-// Postupně stahuje dávky partií (od nejnovějších). Vrací {candidate, hit429,
-// round0Games}. round0Games = první (nejnovější) dávka pro uložení do cache.
-async function pickFromLive(config, username, used, perFetch, rounds) {
+function sampleN(arr, n) {
+	const a = arr.slice();
+	for (let i = a.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[a[i], a[j]] = [a[j], a[i]];
+	}
+	return a.slice(0, n);
+}
+
+// Stahuje dávky partií (od nejnovějších), dokud nemá aspoň `want` blunderů nebo
+// nedojdou partie. Vrací {pool, hit429, round0Games}.
+async function gatherFromLive(config, username, used, perFetch, rounds, want) {
 	let until;
-	let candidate = null;
+	let pool = [];
 	let round0Games = null;
 	let hit429 = false;
 
-	for (let round = 0; round < rounds && !candidate; round++) {
+	for (let round = 0; round < rounds && pool.length < want; round++) {
 		const r = await fetchRoundWithRetry(config, perFetch, until);
 		if (r.status === 429) {
 			hit429 = true;
@@ -140,10 +155,10 @@ async function pickFromLive(config, username, used, perFetch, rounds) {
 		if (round === 0) round0Games = r.games;
 		until = r.games[r.games.length - 1].createdAt - 1;
 
-		candidate = pickCandidate(r.games, username, used);
+		pool = dedupeByKey([...pool, ...collectUnusedBlunders(r.games, username, used)]);
 	}
 
-	return { candidate, hit429, round0Games };
+	return { pool, hit429, round0Games };
 }
 
 async function fetchRoundWithRetry(config, max, until) {
@@ -270,38 +285,45 @@ function opponentName(game, color) {
 	return "?";
 }
 
-// jedna řádka "key: value" pro code block; hodnota se čistí od zalomení
-function kv(key, value) {
-	if (value === null || value === undefined || value === "") return null;
-	return `${key}: ${String(value).replace(/\s+/g, " ").trim()}`;
+function clean(v) {
+	if (v === null || v === undefined || v === "") return undefined;
+	return String(v).replace(/\s+/g, " ").trim();
 }
 
-function renderBlock(candidate) {
+// jeden blunder → objekt s malými písmeny klíčů (přímo pro plugin)
+function blunderEntry(candidate) {
 	const { game, ply, moves, color, entry } = candidate;
-	const date = new Date(game.createdAt).toLocaleDateString("cs-CZ");
-	const opponent = opponentName(game, color);
-	const afterUrl = `https://lichess.org/${game.id}/${color}#${ply + 1}`;
+	const obj = {
+		moves: moves.join(" "),
+		ply,
+		orientation: color,
+		variation: clean(entry.variation),
+		best: clean(entry.best),
+		played: moves[ply],
+		evalbefore: clean(formatEval(game.analysis[ply - 1])),
+		evalafter: clean(formatEval(entry)),
+		comment: clean(entry.judgment && entry.judgment.comment),
+		opponent: opponentName(game, color),
+		date: new Date(game.createdAt).toLocaleDateString("cs-CZ"),
+		url: `https://lichess.org/${game.id}/${color}#${ply + 1}`,
+	};
+	for (const k of Object.keys(obj)) if (obj[k] === undefined) delete obj[k];
+	return obj;
+}
 
-	const lines = [
-		kv("moves", moves.join(" ")),
-		kv("ply", ply),
-		kv("orientation", color),
-		kv("variation", entry.variation),
-		kv("best", entry.best),
-		kv("played", moves[ply]),
-		kv("evalBefore", formatEval(game.analysis[ply - 1])),
-		kv("evalAfter", formatEval(entry)),
-		kv("comment", entry.judgment && entry.judgment.comment),
-		kv("opponent", opponent),
-		kv("date", date),
-		kv("url", afterUrl),
-	].filter(Boolean);
+function renderBlock(candidates) {
+	const list = candidates.map(blunderEntry);
+	const n = list.length;
+	const intro =
+		n === 1
+			? `**♟ Dnešní blunder** — zahraj lepší tah, než jsi tehdy zahrál.`
+			: `**♟ Dnešní blundery** — ${n} k procvičení. Vyřeš a klikni na „▶ Další blunder".`;
 
 	return [
-		`**♟ Dnešní blunder** — z partie ${date} vs. ${opponent}. Zahraj na šachovnici lepší tah, než jsi tehdy zahrál.`,
+		intro,
 		"",
 		"```lichess-blunder",
-		...lines,
+		JSON.stringify(list, null, 1),
 		"```",
 	].join("\n");
 }

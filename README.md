@@ -8,14 +8,17 @@ variantu tam a zpět.
 Dva režimy:
 
 - **blunder** — pozice těsně před blunderem z tvojí Lichess partie; stačí najít
-  ten jeden nejlepší tah. Zbytek varianty je k prohlédnutí.
+  ten jeden nejlepší tah. Zbytek varianty je k prohlédnutí. Blok může nést
+  **frontu** blunderů (JSON pole) — po vyřešení jednoho klikneš na **▶ Další
+  blunder** a jedeš dál.
 - **puzzle** — Lichess puzzle; musí sedět celá vynucená linie (soupeřovy
-  odpovědi se hrají samy). Alternativní mat se uznává.
+  odpovědi se hrají samy). Alternativní mat se uznává. Po vyřešení **▶ Další
+  puzzle** natáhne nový přes `/api/puzzle/next`.
 
 Blunder bloky obvykle generuje Templater script do daily note (viz
 `extras/templater/lichessBlunderCallout.js` — stáhne z Lichess API tvoje
-analyzované partie, najde nepoužitý blunder a vygeneruje blok); puzzle bloky se
-dají psát ručně.
+analyzované partie, vybere `blundersPerNote` nepoužitých blunderů a zapíše je
+jako JSON pole); puzzle bloky se dají psát ručně.
 
 ## Instalace
 
@@ -52,9 +55,10 @@ node build.mjs --deploy   # sestaví a nakopíruje do vaultu
 { "dir": "C:/…/<vault>/.obsidian/plugins/lichess-blunder-trainer" }
 ```
 
-Nasadí `main.js`, `manifest.json`, `styles.css` a prázdný `.hotreload`. S
-pluginem [Hot Reload](https://github.com/pjeby/hot-reload) se změna projeví hned;
-jinak plugin ve vaultu vypni a zapni.
+Nasadí `main.js`, `manifest.json`, `styles.css` a prázdný `.hotreload`. Když má
+`deploy.local.json` navíc `templaterDir`, nakopíruje tam i doprovodný Templater
+script. S pluginem [Hot Reload](https://github.com/pjeby/hot-reload) se změna
+projeví hned; jinak plugin ve vaultu vypni a zapni.
 
 - `vendor/chess.js` — [chess.js](https://github.com/jhlywa/chess.js) 1.0.0-beta.8 (BSD-2-Clause), legalita tahů, SAN ↔ UCI, detekce matu.
 - `vendor/pieces.js` — sady figur cburnett / merida / alpha / staunty z [lichess-org/lila](https://github.com/lichess-org/lila) (GPL-2.0), inline SVG.
@@ -62,6 +66,10 @@ jinak plugin ve vaultu vypni a zapni.
 ## Syntaxe code bloku
 
 `key: value` řádky, `#` = komentář. Neznámé klíče se ignorují.
+
+Blok, jehož obsah začíná `[`, se čte jako **JSON pole** — fronta blunderů; každý
+prvek má stejné klíče jako blunder blok (malými písmeny). Widget mezi nimi
+přepíná tlačítkem **▶ Další blunder**.
 
 ### puzzle
 
@@ -104,6 +112,8 @@ jinak plugin ve vaultu vypni a zapni.
   2. klik → nakreslí šipku toho tahu
   3. klik → zahraje ten tah za tebe (+ vynucenou odpověď); pak jedeš dál
 - Po vyřešení / dohrání přes nápovědu: **⟲ ◀ ▶** na proklikání celé varianty.
+- **▶ Další blunder / ▶ Další puzzle** — načte další z fronty / z Lichess.
+  Počítá se série vyřešených za sebou (🔥).
 - **↺ Zkusit znovu** — reset pozice.
 - **Ruční šipky (PC):** pravý klik = kolečko na poli, pravé táhnutí = šipka mezi
   poli. Výchozí barvu a průhlednost nastavíš v Settings; `Shift` červená, `Alt`

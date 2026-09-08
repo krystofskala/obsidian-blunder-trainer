@@ -2147,6 +2147,14 @@ function parseBlock(src) {
 	return cfg;
 }
 
+// klíče objektu na malá písmena (JSON blok od Templater scriptu je už malý,
+// tohle je jen pojistka)
+function lcKeys(o) {
+	const r = {};
+	for (const k of Object.keys(o || {})) r[k.toLowerCase()] = o[k];
+	return r;
+}
+
 function uciOf(move) {
 	return move.from + move.to + (move.promotion || "");
 }
@@ -2344,6 +2352,8 @@ class BoardWidget {
 			arrowColor: DRAW_COLORS.green, arrowAlpha: 0.9,
 		};
 		this.timers = new Set();
+		this.solvedCount = 0; // kolik jsi jich v tomhle bloku vyřešil za sebou
+		this.loadingNext = false;
 		this.reset(true);
 	}
 
@@ -2412,9 +2422,61 @@ class BoardWidget {
 		this.usedHint = false;
 		this.userShapes = []; // ruční šipky/kolečka (pravý klik na PC)
 		this.drawFrom = null;
+		this.nextMsg = null;
 		this.arrows = this.opts.lastMove ? [square2(this.opts.lastMove, "hint")] : [];
 		if (first) this.build();
 		else this.render();
+	}
+
+	get queue() {
+		return this.opts.queue || null;
+	}
+	get queueIndex() {
+		return this.opts.queueIndex || 0;
+	}
+	hasNext() {
+		if (this.opts.puzzleNext) return true;
+		return !!(this.queue && this.queueIndex < this.queue.length - 1);
+	}
+
+	// další blunder z fronty (JSON pole od Templater scriptu)
+	nextInQueue() {
+		if (!this.queue || this.queueIndex >= this.queue.length - 1) return;
+		const entry = this.queue[this.queueIndex + 1];
+		let no;
+		try {
+			no = optsFromConfig(entry);
+		} catch (e) {
+			this.nextMsg = "Další blunder je poškozený: " + (e.message || e);
+			this.render();
+			return;
+		}
+		no.view = this.view;
+		no.queue = this.queue;
+		no.queueIndex = this.queueIndex + 1;
+		this.opts = no;
+		this.reset(true);
+	}
+
+	// další puzzle přes Lichess /api/puzzle/next
+	async loadNextPuzzle() {
+		if (this.loadingNext || !this.opts.puzzleNext) return;
+		this.loadingNext = true;
+		this.nextMsg = null;
+		this.render();
+		try {
+			const { spec, token } = this.opts.puzzleNext;
+			const no = await fetchPuzzle(spec, token);
+			no.view = this.view;
+			no.puzzleNext = this.opts.puzzleNext;
+			this.opts = no;
+			this.loadingNext = false;
+			this.reset(true);
+		} catch (e) {
+			this.loadingNext = false;
+			this.nextMsg = "Další puzzle se nenačetlo: " + (e.message || e);
+			this.render();
+		}
 	}
 
 	// ------- DOM skeleton -------
@@ -2498,9 +2560,12 @@ class BoardWidget {
 		if (this.opts.mode === "puzzle") {
 			label = "🧩 Lichess puzzle";
 			if (this.opts.meta.rating) label += " · " + this.opts.meta.rating;
+		} else if (this.queue && this.queue.length > 1) {
+			label = "♟ Blunder " + (this.queueIndex + 1) + "/" + this.queue.length;
 		} else {
 			label = "♟ Blunder z Lichess partie";
 		}
+		if (this.solvedCount > 1) label += " · série " + this.solvedCount + " 🔥";
 		let tail;
 		if (this.status === "solved") tail = " — ✅ vyřešeno";
 		else if (this.status === "revealed") tail = this.usedHint ? " — řešení (s nápovědou)" : " — řešení";
@@ -2658,12 +2723,17 @@ class BoardWidget {
 		this.elFeedback.empty();
 		this.elFeedback.removeClass("is-good", "is-bad", "is-info");
 		let msg = "";
+		if (this.nextMsg) {
+			this.elFeedback.addClass("is-bad");
+			this.elFeedback.setText(this.nextMsg);
+			return;
+		}
 		if (this.status === "nolines") {
 			this.elFeedback.addClass("is-info");
 			msg = "K téhle pozici není uložená varianta řešení.";
 		} else if (this.status === "solved") {
 			this.elFeedback.addClass("is-good");
-			msg = "Správně! Celá varianta sedí.";
+			msg = "Správně!" + (this.solvedCount > 1 ? "  " + this.solvedCount + " v řadě 🔥" : "");
 		} else if (this.status === "revealed") {
 			this.elFeedback.addClass("is-info");
 			msg = "Tohle bylo nejlepší pokračování. Proklikej si ho tlačítky ◀ ▶.";
@@ -2697,6 +2767,21 @@ class BoardWidget {
 		};
 
 		if (this.status === "revealed" || this.status === "solved") {
+			// „Další" – nejdůležitější akce, dej ji první
+			if (this.opts.puzzleNext) {
+				btn(
+					this.loadingNext ? "Načítám…" : "▶ Další puzzle",
+					"lbt-btn-next",
+					() => this.loadNextPuzzle(),
+					this.loadingNext
+				);
+			} else if (this.queue && this.queue.length > 1) {
+				if (this.queueIndex < this.queue.length - 1) {
+					btn("▶ Další blunder", "lbt-btn-next", () => this.nextInQueue());
+				} else {
+					btn("✓ Hotovo (" + this.queue.length + ")", "", null, true);
+				}
+			}
 			btn("⟲ začátek", "", () => this.reviewGoto(0));
 			btn("◀", "", () => this.reviewGoto((this.reviewIdx ?? 0) - 1),
 				(this.reviewIdx ?? 0) <= 0);
@@ -2836,6 +2921,10 @@ class BoardWidget {
 	}
 
 	onBoardClick(e) {
+		if (this.nextMsg) {
+			this.nextMsg = null;
+			this.renderFeedback();
+		}
 		// levý klik smaže ručně nakreslené šipky (jako na Lichess)
 		if (this.userShapes.length) {
 			this.userShapes = [];
@@ -2938,8 +3027,7 @@ class BoardWidget {
 		// jen k prohlédnutí. puzzle režim: musí sedět celá vynucená linie.
 		const target = this.opts.requireFullLine ? this.opts.lineUci.length : 1;
 		if (this.cursor >= target) {
-			this.status = "solved";
-			this.reviewIdx = this.cursor;
+			this.markSolved(this.cursor);
 			this.render();
 			return;
 		}
@@ -2953,12 +3041,15 @@ class BoardWidget {
 			this.cursor++;
 			this.flash(reply.slice(2, 4), "good");
 			this.locked = false;
-			if (this.cursor >= this.opts.lineUci.length) {
-				this.status = "solved";
-				this.reviewIdx = this.opts.lineUci.length;
-			}
+			if (this.cursor >= this.opts.lineUci.length) this.markSolved(this.opts.lineUci.length);
 			this.render();
 		}, 450);
+	}
+
+	markSolved(idx) {
+		if (this.status !== "solved") this.solvedCount++;
+		this.status = "solved";
+		this.reviewIdx = idx;
 	}
 
 	playUci(uci) {
@@ -3035,6 +3126,7 @@ class LichessBlunderTrainer extends Plugin {
 				ctx.addChild(child);
 				this.liveWidgets.add(entry);
 
+				const trimmed = String(source).trim();
 				const cfg = parseBlock(source);
 				entry.cfg = cfg;
 				try {
@@ -3043,6 +3135,20 @@ class LichessBlunderTrainer extends Plugin {
 						el.createDiv({ cls: "lbt lbt-loading", text: "Načítám puzzle z Lichess…" });
 						opts = await fetchPuzzle(cfg.puzzle, cfg.token);
 						el.empty();
+						// „▶ Další puzzle" vždy táhne přes /api/puzzle/next
+						const spec = (cfg.puzzle || "").trim();
+						opts.puzzleNext = {
+							spec: spec.startsWith("next") ? spec : "next",
+							token: cfg.token || "",
+						};
+					} else if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+						// fronta blunderů: JSON pole (od Templater scriptu)
+						const parsed = JSON.parse(trimmed);
+						const queue = (Array.isArray(parsed) ? parsed : [parsed]).map(lcKeys);
+						if (!queue.length) throw new Error("Prázdný seznam blunderů.");
+						opts = optsFromConfig(queue[0]);
+						opts.queue = queue;
+						opts.queueIndex = 0;
 					} else {
 						opts = optsFromConfig(cfg);
 					}

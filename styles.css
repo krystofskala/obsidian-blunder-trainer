@@ -226,6 +226,11 @@
 }
 .lbt-btn:disabled { opacity: 0.4; cursor: default; }
 .lbt-btn-hint { background: var(--lbt-hint); color: #1b1b1b; }
+.lbt-btn-next {
+	background: var(--lbt-good, #3fb950);
+	color: #0b1a0e;
+	font-weight: 600;
+}
 .lbt-btn-link {
 	text-decoration: none;
 	background: var(--background-secondary);

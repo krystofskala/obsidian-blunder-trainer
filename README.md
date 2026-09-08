@@ -20,6 +20,15 @@ Blunder bloky obvykle generuje Templater script do daily note (viz
 analyzované partie, vybere `blundersPerNote` nepoužitých blunderů a zapíše je
 jako JSON pole); puzzle bloky se dají psát ručně.
 
+### Opakování chyb (mini SRS)
+
+Blunder z fronty, který **napoprvé zkusíš špatně**, se přidá na seznam a v
+náhodných intervalech se vrací do fronty (v jakémkoli JSON blunder bloku),
+dokud ho **3× po sobě nezvládneš čistě** — bez špatného tahu a bez nápovědy.
+Pak se ze seznamu vyřadí. Seznam je v `data.json` pluginu (klíč `__srs`),
+zapíná/maže se v nastavení. Vyžaduje, aby entries ve frontě měly `key`
+(Templater script ho přidává).
+
 ## Instalace
 
 Není v obchodě.
@@ -113,8 +122,9 @@ přepíná tlačítkem **▶ Další blunder**.
   3. klik → zahraje ten tah za tebe (+ vynucenou odpověď); pak jedeš dál
 - Po vyřešení / dohrání přes nápovědu: **⟲ ◀ ▶** na proklikání celé varianty.
 - **▶ Další blunder / ▶ Další puzzle** — načte další z fronty / z Lichess.
-  Počítá se série vyřešených za sebou (🔥).
-- **↺ Zkusit znovu** — reset pozice.
+- **↺ Zkusit znovu** · **⇅ Otočit** · **⧉ FEN** (do schránky).
+- **série 🔥** se počítá jen za vyřešení **napoprvé, bez nápovědy a bez jediného
+  špatného tahu**. Nápověda ani špatný pokus se do série nezapočítá.
 - **Ruční šipky (PC):** pravý klik = kolečko na poli, pravé táhnutí = šipka mezi
   poli. Výchozí barvu a průhlednost nastavíš v Settings; `Shift` červená, `Alt`
   modrá, `Ctrl` žlutá to dočasně přebijí. Levý klik / tah šipky smaže.
@@ -126,6 +136,8 @@ Settings → Lichess Blunder Trainer:
 | volba | popis |
 |---|---|
 | **Lichess API token** | Nepovinné. Vyplněný se automaticky použije u **všech** puzzle bloků i u „▶ Další puzzle" — zvedne rate limity, umožní personalizované puzzly. Bez scope. Ukládá se do `data.json` pluginu v plain textu. |
+| **Opakování chyb** | Zap/vyp mini SRS (viz výše) + počet čekajících + tlačítko vymazat seznam. |
+| **Souřadnice na desce** | Popisky a–h / 1–8 po okrajích. Přepis v bloku: `coords: false`. |
 | **Motiv šachovnice** | `auto` (výchozí – viz níže), nebo pevné barvy: `green` (Lichess), `brown`, `blue`, `purple`, `grey`, `wood`, `custom` |
 | **Vlastní barvy** | HEX světlých / tmavých polí (jen pro motiv `custom`) |
 | **Sada figur** | `cburnett`, `merida`, `alpha`, `staunty`, nebo `unicode` (bez obrázků) |

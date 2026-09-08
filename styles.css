@@ -160,6 +160,39 @@
 .lbt-sq.lbt-good { box-shadow: inset 0 0 0 4px var(--lbt-good); }
 .lbt-sq.lbt-bad { box-shadow: inset 0 0 0 4px var(--lbt-bad); }
 
+/* souřadnice a–h / 1–8 – vlastní vrstva, needituje se při překreslení figur */
+.lbt-coords {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	pointer-events: none;
+	font: 600 9px / 1 var(--font-monospace, "IBM Plex Mono", monospace);
+	color: #f2f2f2;
+	text-shadow: 0 0 2px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9);
+}
+.lbt-coords .lbt-ranks,
+.lbt-coords .lbt-files {
+	position: absolute;
+	display: flex;
+}
+.lbt-coords .lbt-ranks {
+	top: 0;
+	left: 2px;
+	bottom: 0;
+	flex-direction: column;
+	justify-content: space-between;
+	padding: 2px 0;
+}
+.lbt-coords .lbt-files {
+	left: 0;
+	right: 0;
+	bottom: 1px;
+	justify-content: space-between;
+	padding: 0 3px;
+}
+
 .lbt-arrows {
 	position: absolute;
 	top: 0;

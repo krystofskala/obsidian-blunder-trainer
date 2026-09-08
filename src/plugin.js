@@ -93,6 +93,8 @@ const DEFAULT_SETTINGS = {
 	arrowColorCustom: "",
 	arrowOpacity: 90,
 	lichessToken: "", // Lichess API token – použije se u puzzle bloků automaticky
+	showCoordinates: true, // popisky a–h / 1–8 po okrajích desky
+	srsEnabled: true, // opakování chyb: blunder vyřešený s chybou se vrací, dokud ho 3× po sobě nezvládneš čistě
 };
 
 function hexToRgbTriple(hex) {
@@ -123,7 +125,11 @@ function resolveView(settings, cfg) {
 	let aOp = cfg.arrowopacity !== undefined ? parseInt(cfg.arrowopacity, 10) : settings.arrowOpacity;
 	if (!Number.isFinite(aOp)) aOp = 90;
 	const arrowAlpha = Math.max(15, Math.min(100, aOp)) / 100;
-	const arrow = { arrowColor, arrowAlpha };
+	const coords =
+		cfg.coords !== undefined
+			? /^(1|true|yes|on)$/i.test(String(cfg.coords).trim())
+			: settings.showCoordinates !== false;
+	const arrow = { arrowColor, arrowAlpha, coords };
 
 	// blokové vlastní barvy mají přednost i před "auto"
 	const blkLight = hexToRgbTriple(cfg.light);
@@ -368,7 +374,7 @@ class BoardWidget {
 		this.opts = opts;
 		this.view = opts.view || {
 			light: "235, 236, 208", dark: "119, 149, 86", pieceSet: "cburnett", alpha: 1,
-			arrowColor: DRAW_COLORS.green, arrowAlpha: 0.9,
+			arrowColor: DRAW_COLORS.green, arrowAlpha: 0.9, coords: true,
 		};
 		this.timers = new Set();
 		this.solvedCount = 0; // kolik jsi jich v tomhle bloku vyřešil za sebou
@@ -387,6 +393,8 @@ class BoardWidget {
 	applyViewVars() {
 		const s = this.root.style;
 		s.setProperty("--lbt-board-alpha", String(this.view.alpha));
+		if (this.view.coords) this.root.addClass("show-coords");
+		else this.root.removeClass("show-coords");
 		if (this.view.auto) {
 			this.root.addClass("is-auto");
 			s.removeProperty("--lbt-light");
@@ -439,9 +447,13 @@ class BoardWidget {
 		this.lastWrong = null;
 		this.hintLevel = 0; // 0 nic, 1 figura, 2 šipka (3. klik = zahraje se)
 		this.usedHint = false;
+		this.hadWrong = false; // padl někdy v téhle úloze špatný tah?
+		this.peeked = false; // použil jsi v téhle úloze nápovědu (jakýkoli stupeň)?
+		this.resultReported = false; // výsledek do SRS se hlásí jen jednou
 		this.userShapes = []; // ruční šipky/kolečka (pravý klik na PC)
 		this.drawFrom = null;
 		this.nextMsg = null;
+		this.nextMsgKind = null;
 		this.arrows = this.opts.lastMove ? [square2(this.opts.lastMove, "hint")] : [];
 		if (first) this.build();
 		else this.render();
@@ -473,6 +485,7 @@ class BoardWidget {
 		no.view = this.view;
 		no.queue = this.queue;
 		no.queueIndex = this.queueIndex + 1;
+		no.onResult = this.opts.onResult;
 		this.opts = no;
 		this.reset(true);
 	}
@@ -507,6 +520,7 @@ class BoardWidget {
 		this.elTitle = this.root.createDiv({ cls: "lbt-title" });
 
 		const stage = this.root.createDiv({ cls: "lbt-stage" });
+		this.elStage = stage;
 		this.elBoard = stage.createDiv({ cls: "lbt-board" });
 
 		// Šipky jsou jen ozdoba – kdyby createSvg na nějakém webview zlobil,
@@ -561,6 +575,20 @@ class BoardWidget {
 				this.elSquares[sq] = cell;
 			}
 		}
+		this.renderCoords(ranks, files);
+	}
+
+	// popisky a–h / 1–8 – vlastní vrstva, nezávislá na překreslování figur
+	renderCoords(ranks, files) {
+		if (this.elCoords) this.elCoords.remove();
+		this.elCoords = null;
+		if (!this.view.coords || !this.elStage) return;
+		const layer = this.elStage.createDiv({ cls: "lbt-coords" });
+		const rankRow = layer.createDiv({ cls: "lbt-ranks" });
+		for (const r of ranks) rankRow.createSpan({ text: String(r) });
+		const fileRow = layer.createDiv({ cls: "lbt-files" });
+		for (const f of files) fileRow.createSpan({ text: FILES[f] });
+		this.elCoords = layer;
 	}
 
 	// ------- rendering -------
@@ -573,12 +601,21 @@ class BoardWidget {
 		this.renderMeta();
 	}
 
+	currentEntry() {
+		return this.queue ? this.queue[this.queueIndex] : null;
+	}
+
 	renderTitle() {
 		const side = this.game.turn() === "w" ? "bílé" : "černé";
+		const cur = this.currentEntry();
 		let label;
 		if (this.opts.mode === "puzzle") {
 			label = "🧩 Lichess puzzle";
 			if (this.opts.meta.rating) label += " · " + this.opts.meta.rating;
+		} else if (cur && cur.__srs) {
+			label = "🔁 Opakování chyby";
+			const st = cur.__srsStreak || 0;
+			label += " · " + Math.min(st, SRS_GRADUATE) + "/" + SRS_GRADUATE + " čistě";
 		} else if (this.queue && this.queue.length > 1) {
 			label = "♟ Blunder " + (this.queueIndex + 1) + "/" + this.queue.length;
 		} else {
@@ -743,7 +780,7 @@ class BoardWidget {
 		this.elFeedback.removeClass("is-good", "is-bad", "is-info");
 		let msg = "";
 		if (this.nextMsg) {
-			this.elFeedback.addClass("is-bad");
+			this.elFeedback.addClass(this.nextMsgKind === "info" ? "is-info" : "is-bad");
 			this.elFeedback.setText(this.nextMsg);
 			return;
 		}
@@ -812,6 +849,8 @@ class BoardWidget {
 			btn(labels[Math.min(this.hintLevel, 2)], "lbt-btn-hint", () => this.bumpHint());
 		}
 		btn("↺ Zkusit znovu", "", () => this.reset(false));
+		btn("⇅ Otočit", "", () => this.flipBoard());
+		btn("⧉ FEN", "", () => this.copyFen());
 		if (this.opts.meta.url) {
 			const a = this.elControls.createEl("a", {
 				text: "↗ Lichess",
@@ -821,6 +860,25 @@ class BoardWidget {
 			a.target = "_blank";
 			a.rel = "noopener";
 		}
+	}
+
+	flipBoard() {
+		this.opts.orientation = this.opts.orientation === "white" ? "black" : "white";
+		this.selected = null;
+		this.renderSquares();
+		this.render();
+	}
+
+	copyFen() {
+		const fen = this.game.fen();
+		this.nextMsgKind = "info";
+		try {
+			navigator.clipboard.writeText(fen);
+			this.nextMsg = "FEN zkopírován do schránky";
+		} catch (e) {
+			this.nextMsg = fen;
+		}
+		this.renderFeedback();
 	}
 
 	renderMeta() {
@@ -863,6 +921,7 @@ class BoardWidget {
 	bumpHint() {
 		if (this.status !== "playing" || this.locked) return;
 		if (!this.opts.lineUci[this.cursor]) return;
+		this.peeked = true; // jakýkoli stupeň nápovědy = úloha už není "čistá"
 		if (this.hintLevel < 2) {
 			this.hintLevel++;
 			this.render();
@@ -902,6 +961,7 @@ class BoardWidget {
 	finishRevealed() {
 		this.status = "revealed";
 		this.reviewIdx = this.cursor;
+		this.reportResult(true); // vyřešeno, ale s nápovědou = do SRS jako "ne čistě"
 	}
 
 	// ------- ruční šipky (pravý klik na PC, jako Lichess) -------
@@ -1026,6 +1086,7 @@ class BoardWidget {
 
 		if (!ok) {
 			this.tries++;
+			this.hadWrong = true;
 			this.lastWrong = move.san;
 			this.flash(to, "bad");
 			this.later(() => {
@@ -1066,9 +1127,31 @@ class BoardWidget {
 	}
 
 	markSolved(idx) {
-		if (this.status !== "solved") this.solvedCount++;
+		const first = this.status !== "solved";
 		this.status = "solved";
 		this.reviewIdx = idx;
+		// do série 🔥 (a jako "čistý" pokus pro opakování chyb) se počítá jen
+		// vyřešení napoprvé bez nápovědy a bez jediného špatného tahu
+		const clean = !this.hadWrong && !this.peeked;
+		if (first && clean) this.solvedCount++;
+		if (first) this.reportResult(true);
+	}
+
+	// hlášení výsledku úlohy do SRS (opakování chyb) – jen jednou za úlohu
+	reportResult(solved) {
+		if (this.resultReported || typeof this.opts.onResult !== "function") return;
+		if (!this.queue) return; // SRS jede jen nad frontou blunderů
+		this.resultReported = true;
+		const cfg = this.queue[this.queueIndex];
+		try {
+			this.opts.onResult(cfg, {
+				solved: !!solved,
+				hadWrong: this.hadWrong,
+				hadHint: this.peeked,
+			});
+		} catch (e) {
+			/* ignore */
+		}
 	}
 
 	playUci(uci) {
@@ -1126,9 +1209,34 @@ function square2(uci, kind) {
 
 /* --------------------------------------------------------------------- plugin */
 
+/* ------------------------------------------------- opakování chyb (mini SRS) */
+
+const SRS_CFG_KEYS = [
+	"moves", "ply", "orientation", "variation", "best", "played",
+	"evalbefore", "evalafter", "comment", "opponent", "date", "url", "key",
+];
+const SRS_GRADUATE = 3; // kolikrát čistě po sobě = "naučeno", zmizí ze seznamu
+
+function srsPickCfg(cfg) {
+	const out = {};
+	for (const k of SRS_CFG_KEYS) if (cfg[k] !== undefined) out[k] = cfg[k];
+	return out;
+}
+
+// náhodný interval do dalšího zopakování; s rostoucí sérií se roztahuje
+function srsInterval(streak) {
+	const H = 3600 * 1000;
+	const bands = [[2, 10], [10, 30], [24, 72]]; // hodiny
+	const [lo, hi] = bands[Math.max(0, Math.min(streak, bands.length - 1))];
+	return Math.round((lo + Math.random() * (hi - lo)) * H);
+}
+
 class LichessBlunderTrainer extends Plugin {
 	async onload() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const data = (await this.loadData()) || {};
+		this.srs = data.__srs && typeof data.__srs === "object" ? data.__srs : {};
+		delete data.__srs;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 		this.liveWidgets = new Set(); // { widget, cfg } pro živé překreslení
 
 		this.addSettingTab(new LbtSettingTab(this.app, this));
@@ -1167,9 +1275,11 @@ class LichessBlunderTrainer extends Plugin {
 						const parsed = JSON.parse(trimmed);
 						const queue = (Array.isArray(parsed) ? parsed : [parsed]).map(lcKeys);
 						if (!queue.length) throw new Error("Prázdný seznam blunderů.");
+						this.injectSrsRepeats(queue);
 						opts = optsFromConfig(queue[0]);
 						opts.queue = queue;
 						opts.queueIndex = 0;
+						opts.onResult = (cfg, outcome) => this.srsRecord(cfg, outcome);
 					} else {
 						opts = optsFromConfig(cfg);
 					}
@@ -1186,8 +1296,12 @@ class LichessBlunderTrainer extends Plugin {
 		);
 	}
 
+	async persist() {
+		await this.saveData(Object.assign({}, this.settings, { __srs: this.srs }));
+	}
+
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.persist();
 		// živě překresli všechny otevřené šachovnice (rozehraná pozice zůstává)
 		for (const entry of this.liveWidgets) {
 			if (entry.widget) {
@@ -1198,6 +1312,64 @@ class LichessBlunderTrainer extends Plugin {
 				}
 			}
 		}
+	}
+
+	/* ---- opakování chyb ---- */
+
+	srsDue(now) {
+		return Object.keys(this.srs)
+			.map((k) => this.srs[k])
+			.filter((e) => e && e.cfg && e.cfg.moves && (e.dueAt || 0) <= now);
+	}
+
+	// vloží dnes „splatné" opakování na náhodná místa do fronty
+	injectSrsRepeats(queue) {
+		if (!this.settings.srsEnabled) return;
+		const due = this.srsDue(Date.now());
+		for (const e of due) {
+			const item = lcKeys(e.cfg);
+			item.__srs = true; // widget podle toho ukáže "Opakování" a stupeň série
+			item.__srsStreak = e.streak || 0;
+			const at = queue.length <= 1 ? queue.length : 1 + Math.floor(Math.random() * queue.length);
+			queue.splice(at, 0, item);
+		}
+	}
+
+	// widget hlásí, jak úloha dopadla; outcome = { solved, hadWrong, hadHint }
+	srsRecord(cfg, outcome) {
+		if (!this.settings.srsEnabled) return;
+		const key = cfg && cfg.key;
+		if (!key || !outcome || !outcome.solved) return;
+		const now = Date.now();
+		const clean = !outcome.hadWrong && !outcome.hadHint;
+		let e = this.srs[key];
+
+		if (e) {
+			e.lastAt = now;
+			if (clean) {
+				e.streak = (e.streak || 0) + 1;
+				if (e.streak >= SRS_GRADUATE) delete this.srs[key];
+				else e.dueAt = now + srsInterval(e.streak);
+			} else {
+				e.streak = 0;
+				e.fails = (e.fails || 0) + 1;
+				e.dueAt = now + srsInterval(0);
+			}
+		} else if (outcome.hadWrong) {
+			// nový blunder pokažený hned napoprvé → na seznam opakování
+			this.srs[key] = {
+				key,
+				streak: 0,
+				fails: 1,
+				addedAt: now,
+				lastAt: now,
+				dueAt: now + srsInterval(0),
+				cfg: srsPickCfg(cfg),
+			};
+		} else {
+			return; // čisté vyřešení mimo seznam = nic neukládat
+		}
+		this.persist();
 	}
 }
 
@@ -1234,7 +1406,47 @@ class LbtSettingTab extends PluginSettingTab {
 				t.inputEl.spellcheck = false;
 			});
 
+		containerEl.createEl("h3", { text: "Trénink" });
+
+		const srsCount = Object.keys(this.plugin.srs || {}).length;
+		new Setting(containerEl)
+			.setName("Opakování chyb")
+			.setDesc(
+				"Blunder, který napoprvé zkusíš špatně, se přidá na seznam a vrací se " +
+					"v náhodných intervalech do fronty, dokud ho 3× po sobě nezvládneš " +
+					"čistě (bez chyby a bez nápovědy). Aktuálně na seznamu: " + srsCount + "."
+			)
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.srsEnabled !== false).onChange(async (v) => {
+					this.plugin.settings.srsEnabled = v;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		if (srsCount > 0) {
+			new Setting(containerEl)
+				.setName("Vymazat seznam opakování")
+				.setDesc("Smaže všech " + srsCount + " čekajících blunderů. Nevratné.")
+				.addButton((b) =>
+					b.setButtonText("Vymazat").setWarning().onClick(async () => {
+						this.plugin.srs = {};
+						await this.plugin.persist();
+						this.display();
+					})
+				);
+		}
+
 		containerEl.createEl("h3", { text: "Vzhled" });
+
+		new Setting(containerEl)
+			.setName("Souřadnice na desce")
+			.setDesc("Popisky a–h / 1–8 po okrajích šachovnice.")
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.showCoordinates !== false).onChange(async (v) => {
+					this.plugin.settings.showCoordinates = v;
+					await this.plugin.saveSettings();
+				})
+			);
 
 		new Setting(containerEl)
 			.setName("Motiv šachovnice")
@@ -1346,7 +1558,7 @@ class LbtSettingTab extends PluginSettingTab {
 		const tip = containerEl.createEl("p", { cls: "setting-item-description" });
 		tip.setText(
 			"V jednotlivém bloku jde nastavení přepsat klíči: board:, pieces:, opacity:, " +
-				"light:, dark:, arrowColor:, arrowOpacity:, token:"
+				"light:, dark:, arrowColor:, arrowOpacity:, coords:, token:"
 		);
 	}
 }

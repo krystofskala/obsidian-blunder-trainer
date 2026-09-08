@@ -2019,6 +2019,15 @@ const { Plugin, MarkdownRenderChild, PluginSettingTab, Setting } = obsidian;
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const PIECE_ORDER = ["q", "r", "b", "n"];
 
+// barvy ručně kreslených šipek (pravý klik na PC); modifikátory jako na Lichess
+const DRAW_COLORS = { green: "#15a34a", red: "#cc3333", blue: "#3a82d6", yellow: "#e0a112" };
+function drawColorFor(e) {
+	if (e.shiftKey) return "red";
+	if (e.altKey) return "blue";
+	if (e.ctrlKey || e.metaKey) return "yellow";
+	return "green";
+}
+
 /* --------------------------------------------------------------- vzhled desky */
 
 // barvy polí jako RGB trojice (kvůli nastavitelné průhlednosti)
@@ -2372,6 +2381,10 @@ class BoardWidget {
 		this.pendingPromo = null;
 		this.flashSq = null;
 		this.lastWrong = null;
+		this.hintLevel = 0; // 0 nic, 1 figura, 2 šipka (3. klik = zahraje se)
+		this.usedHint = false;
+		this.userShapes = []; // ruční šipky/kolečka (pravý klik na PC)
+		this.drawFrom = null;
 		this.arrows = this.opts.lastMove ? [square2(this.opts.lastMove, "hint")] : [];
 		if (first) this.build();
 		else this.render();
@@ -2412,12 +2425,22 @@ class BoardWidget {
 			};
 			mk("lbt-head-good", "var(--lbt-good, #3fb950)");
 			mk("lbt-head-hint", "var(--lbt-hint, #d29922)");
+			for (const [name, col] of Object.entries(DRAW_COLORS)) {
+				mk("lbt-head-u-" + name, col);
+			}
 		} catch (e) {
 			this.elArrows = null;
 		}
 
 		this.elSquares = {};
 		this.elBoard.addEventListener("click", (e) => this.onBoardClick(e));
+		// ruční kreslení šipek na PC (pravý klik / pravé táhnutí), jako na Lichess
+		this.elBoard.addEventListener("contextmenu", (e) => e.preventDefault());
+		this.elBoard.addEventListener("mousedown", (e) => this.onDrawStart(e));
+		this.elBoard.addEventListener("mouseup", (e) => this.onDrawEnd(e));
+		this.elBoard.addEventListener("mouseleave", () => {
+			this.drawFrom = null;
+		});
 
 		this.elFeedback = this.root.createDiv({ cls: "lbt-feedback" });
 
@@ -2471,7 +2494,7 @@ class BoardWidget {
 		}
 		let tail;
 		if (this.status === "solved") tail = " — ✅ vyřešeno";
-		else if (this.status === "revealed") tail = " — řešení";
+		else if (this.status === "revealed") tail = this.usedHint ? " — řešení (s nápovědou)" : " — řešení";
 		else if (this.status === "nolines") tail = "";
 		else tail = " — na tahu " + side + ", najdi nejlepší tah";
 		this.elTitle.setText(label + tail);
@@ -2483,7 +2506,8 @@ class BoardWidget {
 			const cell = this.elSquares[sq];
 			cell.empty();
 			cell.removeClass(
-				"lbt-sel", "lbt-dest", "lbt-dest-cap", "lbt-good", "lbt-bad", "lbt-from", "lbt-to"
+				"lbt-sel", "lbt-dest", "lbt-dest-cap", "lbt-good", "lbt-bad",
+				"lbt-from", "lbt-to", "lbt-hintsrc"
 			);
 		}
 		for (let r = 0; r < 8; r++) {
@@ -2514,6 +2538,13 @@ class BoardWidget {
 				if (this.game.get(d)) this.elSquares[d].addClass("lbt-dest-cap");
 			}
 		}
+		// nápověda 1. stupně: zvýrazni figuru, kterou hrát
+		if (this.status === "playing" && this.hintLevel >= 1) {
+			const hu = this.opts.lineUci[this.cursor];
+			if (hu && this.elSquares[hu.slice(0, 2)]) {
+				this.elSquares[hu.slice(0, 2)].addClass("lbt-hintsrc");
+			}
+		}
 		// přetrvávající "blik" po tahu (přežije překreslení, mizí časovačem)
 		if (this.flashSq && this.elSquares[this.flashSq.sq]) {
 			this.elSquares[this.flashSq.sq].addClass(
@@ -2524,26 +2555,70 @@ class BoardWidget {
 
 	renderArrows() {
 		if (!this.elArrows) return;
-		// vyčistit staré čáry (ne defs)
-		this.elArrows.querySelectorAll("line.lbt-arrow").forEach((n) => n.remove());
+		// vyčistit staré tvary (ne defs)
+		this.elArrows.querySelectorAll(".lbt-shape").forEach((n) => n.remove());
+
+		// šipky poslední tah / prohlížení řešení
 		for (const a of this.arrows) {
 			if (!a.from || !a.to) continue;
-			const p1 = this.center(a.from);
-			const p2 = this.center(a.to);
-			this.elArrows.createSvg("line", {
-				cls: "lbt-arrow",
-				attr: {
-					x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-					stroke: a.kind === "good"
-						? "var(--lbt-good, #3fb950)"
-						: "var(--lbt-hint, #d29922)",
-					"stroke-width": "0.16",
-					"stroke-linecap": "round",
-					opacity: "0.85",
-					"marker-end": a.kind === "good" ? "url(#lbt-head-good)" : "url(#lbt-head-hint)",
-				},
+			this.drawArrow(a.from, a.to, {
+				stroke: a.kind === "good" ? "var(--lbt-good, #3fb950)" : "var(--lbt-hint, #d29922)",
+				marker: a.kind === "good" ? "lbt-head-good" : "lbt-head-hint",
+				width: 0.16,
+				opacity: 0.85,
 			});
 		}
+
+		// nápověda 2. stupně: šipka pro další tah řešení
+		if (this.status === "playing" && this.hintLevel >= 2) {
+			const hu = this.opts.lineUci[this.cursor];
+			if (hu) {
+				this.drawArrow(hu.slice(0, 2), hu.slice(2, 4), {
+					stroke: "var(--lbt-good, #3fb950)",
+					marker: "lbt-head-good",
+					width: 0.2,
+					opacity: 0.95,
+				});
+			}
+		}
+
+		// ruční tvary (pravý klik na PC)
+		for (const s of this.userShapes) {
+			const col = DRAW_COLORS[s.color] || DRAW_COLORS.green;
+			if (s.type === "circle") {
+				const c = this.center(s.from);
+				this.elArrows.createSvg("circle", {
+					cls: "lbt-shape",
+					attr: {
+						cx: c.x, cy: c.y, r: 0.44,
+						fill: "none", stroke: col, "stroke-width": 0.09, opacity: 0.9,
+					},
+				});
+			} else {
+				this.drawArrow(s.from, s.to, {
+					stroke: col,
+					marker: "lbt-head-u-" + (s.color || "green"),
+					width: 0.22,
+					opacity: 0.9,
+				});
+			}
+		}
+	}
+
+	drawArrow(from, to, o) {
+		const p1 = this.center(from);
+		const p2 = this.center(to);
+		this.elArrows.createSvg("line", {
+			cls: "lbt-shape lbt-arrow",
+			attr: {
+				x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+				stroke: o.stroke,
+				"stroke-width": String(o.width || 0.18),
+				"stroke-linecap": "round",
+				opacity: String(o.opacity != null ? o.opacity : 0.9),
+				"marker-end": "url(#" + o.marker + ")",
+			},
+		});
 	}
 
 	center(sq) {
@@ -2567,6 +2642,12 @@ class BoardWidget {
 		} else if (this.status === "revealed") {
 			this.elFeedback.addClass("is-info");
 			msg = "Tohle bylo nejlepší pokračování. Proklikej si ho tlačítky ◀ ▶.";
+		} else if (this.status === "playing" && this.hintLevel === 1) {
+			this.elFeedback.addClass("is-info");
+			msg = "💡 Táhni zvýrazněnou figurou.";
+		} else if (this.status === "playing" && this.hintLevel >= 2) {
+			this.elFeedback.addClass("is-info");
+			msg = "💡 Zahraj naznačený tah (další klik ho zahraje za tebe).";
 		} else if (this.lastWrong) {
 			this.elFeedback.addClass("is-bad");
 			msg = "✗ " + this.lastWrong + " není nejlepší. Zkus jiný tah." +
@@ -2598,7 +2679,8 @@ class BoardWidget {
 				(this.reviewIdx ?? 0) >= this.opts.lineUci.length);
 		}
 		if (this.status === "playing") {
-			btn("💡 Ukázat řešení", "lbt-btn-hint", () => this.reveal());
+			const labels = ["💡 Nápověda", "💡 Ukázat tah", "▶ Zahrát tah"];
+			btn(labels[Math.min(this.hintLevel, 2)], "lbt-btn-hint", () => this.bumpHint());
 		}
 		btn("↺ Zkusit znovu", "", () => this.reset(false));
 		if (this.opts.meta.url) {
@@ -2642,7 +2724,98 @@ class BoardWidget {
 		}
 	}
 
+	squareFromEvent(e) {
+		const cell = e.target && e.target.closest ? e.target.closest(".lbt-sq") : null;
+		if (!cell || !this.elBoard.contains(cell)) return null;
+		return cell.dataset.square || null;
+	}
+
+	// nápověda: 1. klik = figura, 2. klik = šipka, 3. klik = tah se zahraje
+	bumpHint() {
+		if (this.status !== "playing" || this.locked) return;
+		if (!this.opts.lineUci[this.cursor]) return;
+		if (this.hintLevel < 2) {
+			this.hintLevel++;
+			this.render();
+			return;
+		}
+		this.usedHint = true;
+		this.selected = null;
+		this.hintPlayMove(this.opts.lineUci[this.cursor]);
+	}
+
+	hintPlayMove(uci) {
+		this.userShapes = [];
+		this.playUci(uci);
+		this.cursor++;
+		this.hintLevel = 0;
+		this.flash(uci.slice(2, 4), "good");
+
+		const target = this.opts.requireFullLine ? this.opts.lineUci.length : 1;
+		if (this.cursor >= target) {
+			this.finishRevealed();
+			this.render();
+			return;
+		}
+		this.locked = true;
+		this.render();
+		this.later(() => {
+			const reply = this.opts.lineUci[this.cursor];
+			this.playUci(reply);
+			this.cursor++;
+			this.flash(reply.slice(2, 4), "good");
+			this.locked = false;
+			if (this.cursor >= this.opts.lineUci.length) this.finishRevealed();
+			this.render();
+		}, 450);
+	}
+
+	finishRevealed() {
+		this.status = "revealed";
+		this.reviewIdx = this.cursor;
+	}
+
+	// ------- ruční šipky (pravý klik na PC, jako Lichess) -------
+	onDrawStart(e) {
+		if (e.button !== 2) return;
+		e.preventDefault();
+		this.drawFrom = this.squareFromEvent(e);
+		this.drawColor = drawColorFor(e);
+	}
+
+	onDrawEnd(e) {
+		if (!this.drawFrom) return; // spouští jen po pravém mousedownu
+		e.preventDefault();
+		const from = this.drawFrom;
+		const to = this.squareFromEvent(e);
+		this.drawFrom = null;
+		if (!to) return;
+		const shape =
+			to === from
+				? { type: "circle", from, color: this.drawColor }
+				: { type: "arrow", from, to, color: this.drawColor };
+		this.toggleShape(shape);
+		this.renderArrows();
+	}
+
+	toggleShape(shape) {
+		const i = this.userShapes.findIndex(
+			(s) => s.type === shape.type && s.from === shape.from && s.to === shape.to
+		);
+		if (i >= 0) {
+			if (this.userShapes[i].color === shape.color) this.userShapes.splice(i, 1);
+			else this.userShapes[i].color = shape.color;
+		} else {
+			this.userShapes.push(shape);
+		}
+	}
+
 	onBoardClick(e) {
+		// levý klik smaže ručně nakreslené šipky (jako na Lichess)
+		if (this.userShapes.length) {
+			this.userShapes = [];
+			this.renderArrows();
+		}
 		if (this.locked) return;
 		const cell = e.target.closest ? e.target.closest(".lbt-sq") : null;
 		if (!cell || !this.elBoard.contains(cell)) return;
@@ -2731,6 +2904,8 @@ class BoardWidget {
 		}
 
 		this.lastWrong = null;
+		this.hintLevel = 0; // po správném tahu se nápověda počítá znovu
+		this.userShapes = [];
 		this.cursor++;
 		this.flash(to, "good");
 

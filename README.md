@@ -99,8 +99,14 @@ jinak plugin ve vaultu vypni a zapni.
 
 - Klik na figuru → zvýrazní se možné tahy, klik na cíl = tah.
 - Správně = zelený rámeček; špatně = červený a tah se vezme zpět.
-- **💡 Ukázat řešení** — nakreslí šipku a přehraje linii, pak ◀ ▶ na proklikání.
+- **💡 Nápověda** — stupňovitá, vždy jen na další tah:
+  1. klik → zvýrazní figuru, kterou hrát
+  2. klik → nakreslí šipku toho tahu
+  3. klik → zahraje ten tah za tebe (+ vynucenou odpověď); pak jedeš dál
+- Po vyřešení / dohrání přes nápovědu: **⟲ ◀ ▶** na proklikání celé varianty.
 - **↺ Zkusit znovu** — reset pozice.
+- **Ruční šipky (PC):** pravý klik = kolečko na poli, pravé táhnutí = šipka mezi
+  poli. `Shift` červená, `Alt` modrá, `Ctrl` žlutá. Levý klik / tah je smaže.
 
 ## Vzhled — nastavení pluginu
 

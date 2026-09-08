@@ -2074,6 +2074,7 @@ const DEFAULT_SETTINGS = {
 	arrowColor: "green", // výchozí barva ručních šipek (klíč nebo #hex)
 	arrowColorCustom: "",
 	arrowOpacity: 90,
+	lichessToken: "", // Lichess API token – použije se u puzzle bloků automaticky
 };
 
 function hexToRgbTriple(hex) {
@@ -3132,14 +3133,16 @@ class LichessBlunderTrainer extends Plugin {
 				try {
 					let opts;
 					if (cfg.puzzle !== undefined) {
+						// token: z bloku má přednost, jinak z nastavení pluginu
+						const token = cfg.token || this.settings.lichessToken || "";
 						el.createDiv({ cls: "lbt lbt-loading", text: "Načítám puzzle z Lichess…" });
-						opts = await fetchPuzzle(cfg.puzzle, cfg.token);
+						opts = await fetchPuzzle(cfg.puzzle, token);
 						el.empty();
 						// „▶ Další puzzle" vždy táhne přes /api/puzzle/next
 						const spec = (cfg.puzzle || "").trim();
 						opts.puzzleNext = {
 							spec: spec.startsWith("next") ? spec : "next",
-							token: cfg.token || "",
+							token,
 						};
 					} else if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
 						// fronta blunderů: JSON pole (od Templater scriptu)
@@ -3190,6 +3193,30 @@ class LbtSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 		const s = this.plugin.settings;
+
+		containerEl.createEl("h3", { text: "Lichess" });
+
+		new Setting(containerEl)
+			.setName("Lichess API token")
+			.setDesc(
+				"Nepovinné. Použije se automaticky u všech puzzle bloků i u tlačítka " +
+					"Další puzzle – zvedne rate limity a umožní personalizované puzzly. " +
+					"Vytvoř na lichess.org → Preferences → API access tokens, žádný scope " +
+					"není potřeba. Ukládá se v plain textu do data.json pluginu."
+			)
+			.addText((t) => {
+				t.setPlaceholder("lip_xxxxxxxxxxxxxxxx")
+					.setValue(s.lichessToken)
+					.onChange(async (v) => {
+						s.lichessToken = v.trim();
+						await this.plugin.saveSettings();
+					});
+				t.inputEl.type = "password";
+				t.inputEl.autocomplete = "off";
+				t.inputEl.spellcheck = false;
+			});
+
+		containerEl.createEl("h3", { text: "Vzhled" });
 
 		new Setting(containerEl)
 			.setName("Motiv šachovnice")
@@ -3301,7 +3328,7 @@ class LbtSettingTab extends PluginSettingTab {
 		const tip = containerEl.createEl("p", { cls: "setting-item-description" });
 		tip.setText(
 			"V jednotlivém bloku jde nastavení přepsat klíči: board:, pieces:, opacity:, " +
-				"light:, dark:, arrowColor:, arrowOpacity:"
+				"light:, dark:, arrowColor:, arrowOpacity:, token:"
 		);
 	}
 }

@@ -76,7 +76,7 @@ přepíná tlačítkem **▶ Další blunder**.
 | klíč | popis |
 |---|---|
 | `puzzle` | `daily` \| `<id>` \| `next` \| `next <theme>` — stáhne se z Lichess puzzle API |
-| `token` | nepovinný Lichess API token (Bearer) pro personalizované `next` |
+| `token` | nepovinný Lichess API token (Bearer). Když je vyplněný v nastavení pluginu, použije se automaticky u všech puzzle bloků — tady jen na přepsání. |
 
 ### blunder (z partie)
 
@@ -119,12 +119,13 @@ přepíná tlačítkem **▶ Další blunder**.
   poli. Výchozí barvu a průhlednost nastavíš v Settings; `Shift` červená, `Alt`
   modrá, `Ctrl` žlutá to dočasně přebijí. Levý klik / tah šipky smaže.
 
-## Vzhled — nastavení pluginu
+## Nastavení pluginu
 
 Settings → Lichess Blunder Trainer:
 
 | volba | popis |
 |---|---|
+| **Lichess API token** | Nepovinné. Vyplněný se automaticky použije u **všech** puzzle bloků i u „▶ Další puzzle" — zvedne rate limity, umožní personalizované puzzly. Bez scope. Ukládá se do `data.json` pluginu v plain textu. |
 | **Motiv šachovnice** | `auto` (výchozí – viz níže), nebo pevné barvy: `green` (Lichess), `brown`, `blue`, `purple`, `grey`, `wood`, `custom` |
 | **Vlastní barvy** | HEX světlých / tmavých polí (jen pro motiv `custom`) |
 | **Sada figur** | `cburnett`, `merida`, `alpha`, `staunty`, nebo `unicode` (bez obrázků) |

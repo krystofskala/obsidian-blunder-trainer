@@ -39,11 +39,23 @@ const PIECE_ORDER = ["q", "r", "b", "n"];
 
 // barvy ručně kreslených šipek (pravý klik na PC); modifikátory jako na Lichess
 const DRAW_COLORS = { green: "#15a34a", red: "#cc3333", blue: "#3a82d6", yellow: "#e0a112" };
-function drawColorFor(e) {
+const DRAW_COLOR_LABELS = { green: "Zelená", red: "Červená", blue: "Modrá", yellow: "Žlutá" };
+
+// Modifikátory vrátí konkrétní barvu (jako na Lichess); bez modifikátoru
+// vrátí null = "použij výchozí barvu z nastavení".
+function drawColorForEvent(e) {
 	if (e.shiftKey) return "red";
 	if (e.altKey) return "blue";
 	if (e.ctrlKey || e.metaKey) return "yellow";
-	return "green";
+	return null;
+}
+
+// klíč z DRAW_COLORS, #hex, nebo cokoli → platná CSS barva
+function resolveColor(c) {
+	if (!c) return DRAW_COLORS.green;
+	if (DRAW_COLORS[c]) return DRAW_COLORS[c];
+	if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(c).trim())) return String(c).trim();
+	return DRAW_COLORS.green;
 }
 
 /* --------------------------------------------------------------- vzhled desky */
@@ -77,6 +89,9 @@ const DEFAULT_SETTINGS = {
 	darkColor: "",
 	pieceSet: "cburnett",
 	boardOpacity: 85,
+	arrowColor: "green", // výchozí barva ručních šipek (klíč nebo #hex)
+	arrowColorCustom: "",
+	arrowOpacity: 90,
 };
 
 function hexToRgbTriple(hex) {
@@ -100,6 +115,15 @@ function resolveView(settings, cfg) {
 	opacity = Math.max(10, Math.min(100, opacity));
 	const alpha = opacity / 100;
 
+	// šipky: barva + průhlednost (globální nebo z bloku)
+	let arrowSpec = cfg.arrowcolor || settings.arrowColor || "green";
+	if (arrowSpec === "custom") arrowSpec = settings.arrowColorCustom;
+	const arrowColor = resolveColor(arrowSpec);
+	let aOp = cfg.arrowopacity !== undefined ? parseInt(cfg.arrowopacity, 10) : settings.arrowOpacity;
+	if (!Number.isFinite(aOp)) aOp = 90;
+	const arrowAlpha = Math.max(15, Math.min(100, aOp)) / 100;
+	const arrow = { arrowColor, arrowAlpha };
+
 	// blokové vlastní barvy mají přednost i před "auto"
 	const blkLight = hexToRgbTriple(cfg.light);
 	const blkDark = hexToRgbTriple(cfg.dark);
@@ -107,7 +131,7 @@ function resolveView(settings, cfg) {
 	// AUTO: pole nemají vlastní barvu, jen průsvitný závoj → převezmou to,
 	// co je pod nimi (pozadí poznámky / calloutu / obrázku).
 	if (themeName === "auto" && !cfg.board && !blkLight && !blkDark) {
-		return { auto: true, pieceSet, alpha };
+		return { auto: true, pieceSet, alpha, ...arrow };
 	}
 
 	const theme = BOARD_THEMES[themeName] || BOARD_THEMES.green;
@@ -124,7 +148,7 @@ function resolveView(settings, cfg) {
 	if (blkLight) light = blkLight;
 	if (blkDark) dark = blkDark;
 
-	return { auto: false, light, dark, pieceSet, alpha };
+	return { auto: false, light, dark, pieceSet, alpha, ...arrow };
 }
 
 /* ------------------------------------------------------------------ parsing */
@@ -333,7 +357,10 @@ class BoardWidget {
 	constructor(root, opts) {
 		this.root = root;
 		this.opts = opts;
-		this.view = opts.view || { light: "235, 236, 208", dark: "119, 149, 86", pieceSet: "cburnett", alpha: 1 };
+		this.view = opts.view || {
+			light: "235, 236, 208", dark: "119, 149, 86", pieceSet: "cburnett", alpha: 1,
+			arrowColor: DRAW_COLORS.green, arrowAlpha: 0.9,
+		};
 		this.timers = new Set();
 		this.reset(true);
 	}
@@ -421,31 +448,13 @@ class BoardWidget {
 
 		// Šipky jsou jen ozdoba – kdyby createSvg na nějakém webview zlobil,
 		// nesmí to shodit celou šachovnici.
+		// Hlavičky šipek si kreslíme jako <polygon> (žádné SVG <marker>), aby
+		// barva byla libovolná bez předdefinovaných markerů.
 		this.elArrows = null;
 		try {
 			this.elArrows = stage.createSvg("svg", { cls: "lbt-arrows" });
 			this.elArrows.setAttribute("viewBox", "0 0 8 8");
 			this.elArrows.setAttribute("preserveAspectRatio", "none");
-			const defs = this.elArrows.createSvg("defs");
-			const mk = (id, color) => {
-				const m = defs.createSvg("marker", {
-					attr: {
-						id,
-						viewBox: "0 0 10 10",
-						refX: "7",
-						refY: "5",
-						markerWidth: "4",
-						markerHeight: "4",
-						orient: "auto-start-reverse",
-					},
-				});
-				m.createSvg("path", { attr: { d: "M0,0 L10,5 L0,10 z", fill: color } });
-			};
-			mk("lbt-head-good", "var(--lbt-good, #3fb950)");
-			mk("lbt-head-hint", "var(--lbt-hint, #d29922)");
-			for (const [name, col] of Object.entries(DRAW_COLORS)) {
-				mk("lbt-head-u-" + name, col);
-			}
 		} catch (e) {
 			this.elArrows = null;
 		}
@@ -573,15 +582,16 @@ class BoardWidget {
 
 	renderArrows() {
 		if (!this.elArrows) return;
-		// vyčistit staré tvary (ne defs)
 		this.elArrows.querySelectorAll(".lbt-shape").forEach((n) => n.remove());
 
-		// šipky poslední tah / prohlížení řešení
+		const uCol = this.view.arrowColor || DRAW_COLORS.green;
+		const uOp = this.view.arrowAlpha != null ? this.view.arrowAlpha : 0.9;
+
+		// šipky poslední tah / prohlížení řešení (funkční barvy, pevná průhlednost)
 		for (const a of this.arrows) {
 			if (!a.from || !a.to) continue;
 			this.drawArrow(a.from, a.to, {
-				stroke: a.kind === "good" ? "var(--lbt-good, #3fb950)" : "var(--lbt-hint, #d29922)",
-				marker: a.kind === "good" ? "lbt-head-good" : "lbt-head-hint",
+				color: a.kind === "good" ? "var(--lbt-good, #3fb950)" : "var(--lbt-hint, #d29922)",
 				width: 0.16,
 				opacity: 0.85,
 			});
@@ -592,49 +602,64 @@ class BoardWidget {
 			const hu = this.opts.lineUci[this.cursor];
 			if (hu) {
 				this.drawArrow(hu.slice(0, 2), hu.slice(2, 4), {
-					stroke: "var(--lbt-good, #3fb950)",
-					marker: "lbt-head-good",
+					color: "var(--lbt-good, #3fb950)",
 					width: 0.2,
 					opacity: 0.95,
 				});
 			}
 		}
 
-		// ruční tvary (pravý klik na PC)
+		// ruční tvary (pravý klik na PC) – barva i průhlednost z nastavení
 		for (const s of this.userShapes) {
-			const col = DRAW_COLORS[s.color] || DRAW_COLORS.green;
+			const col = s.color ? resolveColor(s.color) : uCol;
 			if (s.type === "circle") {
 				const c = this.center(s.from);
 				this.elArrows.createSvg("circle", {
 					cls: "lbt-shape",
 					attr: {
 						cx: c.x, cy: c.y, r: 0.44,
-						fill: "none", stroke: col, "stroke-width": 0.09, opacity: 0.9,
+						fill: "none", stroke: col, "stroke-width": 0.09, opacity: String(uOp),
 					},
 				});
 			} else {
-				this.drawArrow(s.from, s.to, {
-					stroke: col,
-					marker: "lbt-head-u-" + (s.color || "green"),
-					width: 0.22,
-					opacity: 0.9,
-				});
+				this.drawArrow(s.from, s.to, { color: col, width: 0.22, opacity: uOp });
 			}
 		}
 	}
 
+	// šipka = čára zkrácená o hlavičku + trojúhelníková hlavička (<polygon>)
 	drawArrow(from, to, o) {
 		const p1 = this.center(from);
 		const p2 = this.center(to);
+		const dx = p2.x - p1.x;
+		const dy = p2.y - p1.y;
+		const len = Math.hypot(dx, dy) || 1;
+		const ux = dx / len;
+		const uy = dy / len;
+		const head = Math.min(0.34, len * 0.5); // délka hlavičky
+		const hw = head * 0.62; // poloviční šířka hlavičky
+		const bx = p2.x - ux * head; // pata hlavičky
+		const by = p2.y - uy * head;
+		const op = String(o.opacity != null ? o.opacity : 0.9);
 		this.elArrows.createSvg("line", {
 			cls: ["lbt-shape", "lbt-arrow"],
 			attr: {
-				x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-				stroke: o.stroke,
+				x1: p1.x, y1: p1.y, x2: bx, y2: by,
+				stroke: o.color,
 				"stroke-width": String(o.width || 0.18),
 				"stroke-linecap": "round",
-				opacity: String(o.opacity != null ? o.opacity : 0.9),
-				"marker-end": "url(#" + o.marker + ")",
+				opacity: op,
+			},
+		});
+		this.elArrows.createSvg("polygon", {
+			cls: "lbt-shape",
+			attr: {
+				points:
+					p2.x + "," + p2.y + " " +
+					(bx - uy * hw) + "," + (by + ux * hw) + " " +
+					(bx + uy * hw) + "," + (by - ux * hw),
+				fill: o.color,
+				opacity: op,
 			},
 		});
 	}
@@ -798,7 +823,7 @@ class BoardWidget {
 		if (e.button !== 2) return;
 		e.preventDefault();
 		this.drawFrom = this.squareFromEvent(e);
-		this.drawColor = drawColorFor(e);
+		this.drawColor = drawColorForEvent(e); // "red"/"blue"/"yellow" nebo null (= výchozí)
 	}
 
 	onDrawEnd(e) {
@@ -1143,9 +1168,52 @@ class LbtSettingTab extends PluginSettingTab {
 					})
 			);
 
+		containerEl.createEl("h3", { text: "Šipky" });
+
+		new Setting(containerEl)
+			.setName("Barva ručních šipek")
+			.setDesc(
+				"Výchozí barva při pravém kliku. Shift/Alt/Ctrl ji dočasně změní na " +
+					"červenou/modrou/žlutou. Funkční šipky (nápověda, poslední tah) zůstávají."
+			)
+			.addDropdown((d) => {
+				for (const [k, label] of Object.entries(DRAW_COLOR_LABELS)) d.addOption(k, label);
+				d.addOption("custom", "Vlastní (HEX níže)");
+				d.setValue(DRAW_COLOR_LABELS[s.arrowColor] ? s.arrowColor : (s.arrowColor === "custom" ? "custom" : "green"))
+					.onChange(async (v) => {
+						s.arrowColor = v;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Vlastní barva šipek")
+			.setDesc("HEX, např. #E0115F. Použije se, když je výše zvoleno Vlastní.")
+			.addText((t) =>
+				t.setPlaceholder("#E0115F").setValue(s.arrowColorCustom).onChange(async (v) => {
+					s.arrowColorCustom = v.trim();
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Průhlednost šipek")
+			.setDesc("Platí pro ručně kreslené šipky a kolečka.")
+			.addSlider((sl) =>
+				sl
+					.setLimits(15, 100, 5)
+					.setValue(s.arrowOpacity)
+					.setDynamicTooltip()
+					.onChange(async (v) => {
+						s.arrowOpacity = v;
+						await this.plugin.saveSettings();
+					})
+			);
+
 		const tip = containerEl.createEl("p", { cls: "setting-item-description" });
 		tip.setText(
-			"V jednotlivém bloku jde nastavení přepsat klíči: board:, pieces:, opacity:, light:, dark:"
+			"V jednotlivém bloku jde nastavení přepsat klíči: board:, pieces:, opacity:, " +
+				"light:, dark:, arrowColor:, arrowOpacity:"
 		);
 	}
 }

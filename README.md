@@ -106,7 +106,8 @@ jinak plugin ve vaultu vypni a zapni.
 - Po vyřešení / dohrání přes nápovědu: **⟲ ◀ ▶** na proklikání celé varianty.
 - **↺ Zkusit znovu** — reset pozice.
 - **Ruční šipky (PC):** pravý klik = kolečko na poli, pravé táhnutí = šipka mezi
-  poli. `Shift` červená, `Alt` modrá, `Ctrl` žlutá. Levý klik / tah je smaže.
+  poli. Výchozí barvu a průhlednost nastavíš v Settings; `Shift` červená, `Alt`
+  modrá, `Ctrl` žlutá to dočasně přebijí. Levý klik / tah šipky smaže.
 
 ## Vzhled — nastavení pluginu
 
@@ -118,6 +119,8 @@ Settings → Lichess Blunder Trainer:
 | **Vlastní barvy** | HEX světlých / tmavých polí (jen pro motiv `custom`) |
 | **Sada figur** | `cburnett`, `merida`, `alpha`, `staunty`, nebo `unicode` (bez obrázků) |
 | **Sytost / průhlednost šachovnice** | 10–100 %. U `auto` = síla závoje polí. U barevných motivů = krytí polí. Figury zůstávají plné. |
+| **Barva ručních šipek** | `green` / `red` / `blue` / `yellow` / `custom` (+ HEX). Výchozí barva pravého kliku; Shift/Alt/Ctrl ji přebijí. |
+| **Průhlednost šipek** | 15–100 %, jen pro ručně kreslené šipky a kolečka. |
 
 **Motiv `auto`:** pole nemají vlastní barvu, jen průsvitný závoj (světlá =
 zesvětlí, tmavá = ztmaví). Deska tím převezme barvu čehokoli je pod ní — pozadí
@@ -142,8 +145,10 @@ opacity: 45
 
 ```lichess-blunder
 puzzle: daily
-light: #EAEAEA        # vlastní barvy jen pro tento blok
+light: #EAEAEA          # vlastní barvy jen pro tento blok
 dark: #6C8CB4
+arrowColor: #E0115F     # barva ručních šipek jen pro tento blok
+arrowOpacity: 70
 ```
 ````
 

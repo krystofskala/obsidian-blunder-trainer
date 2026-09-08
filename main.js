@@ -2609,7 +2609,7 @@ class BoardWidget {
 		const p1 = this.center(from);
 		const p2 = this.center(to);
 		this.elArrows.createSvg("line", {
-			cls: "lbt-shape lbt-arrow",
+			cls: ["lbt-shape", "lbt-arrow"],
 			attr: {
 				x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
 				stroke: o.stroke,

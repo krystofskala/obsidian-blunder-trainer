@@ -71,10 +71,17 @@ const BOARD_THEMES = {
 };
 
 const PIECE_SETS = {
-	cburnett: "cburnett",
+	neo: "neo — geometrická (vlastní)",
+	cburnett: "cburnett — klasika",
 	merida: "merida",
-	alpha: "alpha",
+	alpha: "alpha — linka",
 	staunty: "staunty",
+	pixel: "pixel — 8-bit",
+	shapes: "shapes — minimal",
+	anarcandy: "anarcandy — cukrová",
+	firi: "firi — modern",
+	horsey: "horsey — Lichess doodle",
+	maestro: "maestro — elegantní",
 	unicode: "unicode (bez obrázků)",
 };
 

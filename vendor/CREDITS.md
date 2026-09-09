@@ -14,11 +14,12 @@ Used for move legality, SAN ↔ UCI conversion and check/mate detection.
 
 ## Piece sets (`vendor/pieces.js`)
 
-Inlined SVG piece sets `cburnett`, `merida`, `alpha`, `staunty`.
+Inlined SVG piece sets.
 
-- Source: https://github.com/lichess-org/lila (`public/piece/<set>/`)
-- License: GPL-2.0
-- The cburnett set is by Colin M.L. Burnett (originally Wikimedia Commons).
+- `neo` — original, made for this plugin. MIT (same as the plugin code).
+- `cburnett`, `merida`, `alpha`, `staunty`, `pixel`, `shapes`, `anarcandy`,
+  `firi`, `horsey`, `maestro` — from https://github.com/lichess-org/lila
+  (`public/piece/<set>/`), **GPL-2.0**. cburnett is by Colin M.L. Burnett.
 
 If you redistribute this plugin you must keep this notice and the GPL-2.0
-terms for the piece SVGs.
+terms for the Lichess piece SVGs.

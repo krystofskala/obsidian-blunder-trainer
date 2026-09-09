@@ -70,7 +70,7 @@ script. S pluginem [Hot Reload](https://github.com/pjeby/hot-reload) se změna
 projeví hned; jinak plugin ve vaultu vypni a zapni.
 
 - `vendor/chess.js` — [chess.js](https://github.com/jhlywa/chess.js) 1.0.0-beta.8 (BSD-2-Clause), legalita tahů, SAN ↔ UCI, detekce matu.
-- `vendor/pieces.js` — sady figur cburnett / merida / alpha / staunty z [lichess-org/lila](https://github.com/lichess-org/lila) (GPL-2.0), inline SVG.
+- `vendor/pieces.js` — vlastní sada `neo` (MIT) + 10 sad z [lichess-org/lila](https://github.com/lichess-org/lila) (GPL-2.0), vše inline SVG. Regenerace: `node vendor/make-pieces.mjs`.
 
 ## Syntaxe code bloku
 
@@ -140,7 +140,7 @@ Settings → Lichess Blunder Trainer:
 | **Souřadnice na desce** | Popisky a–h / 1–8 po okrajích. Přepis v bloku: `coords: false`. |
 | **Motiv šachovnice** | `auto` (výchozí – viz níže), nebo pevné barvy: `green` (Lichess), `brown`, `blue`, `purple`, `grey`, `wood`, `custom` |
 | **Vlastní barvy** | HEX světlých / tmavých polí (jen pro motiv `custom`) |
-| **Sada figur** | `cburnett`, `merida`, `alpha`, `staunty`, nebo `unicode` (bez obrázků) |
+| **Sada figur** | `neo` (vlastní geometrická), `cburnett`, `merida`, `alpha`, `staunty`, `pixel`, `shapes`, `anarcandy`, `firi`, `horsey`, `maestro`, nebo `unicode` |
 | **Sytost / průhlednost šachovnice** | 10–100 %. U `auto` = síla závoje polí. U barevných motivů = krytí polí. Figury zůstávají plné. |
 | **Barva ručních šipek** | `green` / `red` / `blue` / `yellow` / `custom` (+ HEX). Výchozí barva pravého kliku; Shift/Alt/Ctrl ji přebijí. |
 | **Průhlednost šipek** | 15–100 %, jen pro ručně kreslené šipky a kolečka. |

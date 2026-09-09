@@ -2510,6 +2510,7 @@ class BoardWidget {
 	destroy() {
 		for (const t of this.timers) window.clearTimeout(t);
 		this.timers.clear();
+		if (this._drag) this.cancelDrag();
 	}
 
 	later(fn, ms) {
@@ -2540,6 +2541,8 @@ class BoardWidget {
 		this.resultReported = false; // výsledek do SRS se hlásí jen jednou
 		this.userShapes = []; // ruční šipky/kolečka (pravý klik na PC)
 		this.drawFrom = null;
+		this.cancelDrag(); // kdyby se resetovalo přímo během tažení
+		this._suppressClick = false;
 		this.nextMsg = null;
 		this.nextMsgKind = null;
 		this.arrows = this.opts.lastMove ? [square2(this.opts.lastMove, "hint")] : [];
@@ -2626,6 +2629,12 @@ class BoardWidget {
 
 		this.elSquares = {};
 		this.elBoard.addEventListener("click", (e) => this.onBoardClick(e));
+		// tažení figur myší / prstem (levé tlačítko, 1. dotyk) – jako na Lichess.
+		// klik-klik (vyber figuru → klikni cíl) zůstává jako záloha.
+		this.elBoard.addEventListener("pointerdown", (e) => this.onPieceDragStart(e));
+		this.elBoard.addEventListener("pointermove", (e) => this.onPieceDragMove(e));
+		this.elBoard.addEventListener("pointerup", (e) => this.onPieceDragEnd(e));
+		this.elBoard.addEventListener("pointercancel", (e) => this.onPieceDragEnd(e));
 		// ruční kreslení šipek na PC (pravý klik / pravé táhnutí), jako na Lichess
 		this.elBoard.addEventListener("contextmenu", (e) => e.preventDefault());
 		this.elBoard.addEventListener("mousedown", (e) => this.onDrawStart(e));
@@ -2725,7 +2734,7 @@ class BoardWidget {
 			cell.empty();
 			cell.removeClass(
 				"lbt-sel", "lbt-dest", "lbt-dest-cap", "lbt-good", "lbt-bad",
-				"lbt-from", "lbt-to", "lbt-hintsrc"
+				"lbt-from", "lbt-to", "lbt-hintsrc", "lbt-dragging", "lbt-drag-over"
 			);
 		}
 		for (let r = 0; r < 8; r++) {
@@ -2768,6 +2777,10 @@ class BoardWidget {
 			this.elSquares[this.flashSq.sq].addClass(
 				this.flashSq.kind === "good" ? "lbt-good" : "lbt-bad"
 			);
+		}
+		// probíhá tažení → drž zdrojové pole "zvednuté" i po překreslení
+		if (this._drag && this._drag.moved && this.elSquares[this._drag.from]) {
+			this.elSquares[this._drag.from].addClass("lbt-dragging");
 		}
 	}
 
@@ -3005,6 +3018,141 @@ class BoardWidget {
 		return cell.dataset.square || null;
 	}
 
+	// ------- tažení figur (pointer events – myš i dotyk) -------
+
+	// pole pod bodem [clientX, clientY], i když se přesně netrefí do <div>
+	squareFromPoint(clientX, clientY) {
+		if (!this.elBoard) return null;
+		const rect = this.elBoard.getBoundingClientRect();
+		if (!rect.width || !rect.height) return null;
+		const col = Math.floor(((clientX - rect.left) / rect.width) * 8);
+		const row = Math.floor(((clientY - rect.top) / rect.height) * 8);
+		if (col < 0 || col > 7 || row < 0 || row > 7) return null;
+		let f, r;
+		if (this.opts.orientation === "white") { f = col; r = 8 - row; }
+		else { f = 7 - col; r = row + 1; }
+		return FILES[f] + r;
+	}
+
+	onPieceDragStart(e) {
+		if (e.button !== 0 || e.isPrimary === false) return; // jen levé tlačítko / 1. dotyk
+		if (this.locked || this.pendingPromo || this.status !== "playing") return;
+		if (this._drag) return;
+		const from = this.squareFromPoint(e.clientX, e.clientY);
+		if (!from) return;
+		const piece = this.game.get(from);
+		if (!piece || piece.color !== this.game.turn()) return; // taháme jen figurou na tahu
+
+		e.preventDefault();
+		const prevSelected = this.selected;
+		this.selected = from;
+		if (this.nextMsg) this.nextMsg = null;
+		if (this.userShapes.length) { this.userShapes = []; this.renderArrows(); }
+		this.renderPieces(); // ukáže výběr + legální cílová pole
+
+		const m = this.pieceMarkup(piece.color, piece.type);
+		const ghost = this.elStage.createDiv({ cls: "lbt-drag-ghost" });
+		if (m.uni) {
+			ghost.addClass("lbt-uni", "lbt-uni-" + piece.color);
+			ghost.setText(m.text);
+		} else {
+			ghost.innerHTML = m.html;
+		}
+
+		this._drag = {
+			from,
+			prevSelected,
+			pointerId: e.pointerId,
+			ghost,
+			uni: !!m.uni,
+			startX: e.clientX,
+			startY: e.clientY,
+			moved: false,
+			over: null,
+			legal: new Set(this.legalDests(from)),
+		};
+		this.positionDragGhost(e.clientX, e.clientY);
+		try { this.elBoard.setPointerCapture(e.pointerId); } catch (_) {}
+	}
+
+	positionDragGhost(clientX, clientY) {
+		const g = this._drag;
+		if (!g || !g.ghost) return;
+		const rect = this.elBoard.getBoundingClientRect();
+		const size = rect.width / 8;
+		g.ghost.style.width = size + "px";
+		g.ghost.style.height = size + "px";
+		if (g.uni) g.ghost.style.fontSize = (size * 0.82) + "px";
+		g.ghost.style.transform =
+			"translate(" + (clientX - rect.left - size / 2) + "px," +
+			(clientY - rect.top - size / 2) + "px)";
+	}
+
+	onPieceDragMove(e) {
+		const g = this._drag;
+		if (!g || e.pointerId !== g.pointerId) return;
+		e.preventDefault();
+		if (!g.moved) {
+			// malý práh, ať čisté ťuknutí projde jako klik (výběr / klik-klik)
+			if (Math.abs(e.clientX - g.startX) + Math.abs(e.clientY - g.startY) < 4) return;
+			g.moved = true;
+			if (this.elSquares[g.from]) this.elSquares[g.from].addClass("lbt-dragging");
+		}
+		this.positionDragGhost(e.clientX, e.clientY);
+		const sq = this.squareFromPoint(e.clientX, e.clientY);
+		if (sq !== g.over) {
+			if (g.over && this.elSquares[g.over]) this.elSquares[g.over].removeClass("lbt-drag-over");
+			g.over = sq;
+			if (sq && g.legal.has(sq) && this.elSquares[sq]) {
+				this.elSquares[sq].addClass("lbt-drag-over");
+			}
+		}
+	}
+
+	onPieceDragEnd(e) {
+		const g = this._drag;
+		if (!g || e.pointerId !== g.pointerId) return;
+		const cancelled = e.type === "pointercancel";
+		const target = (!cancelled && g.moved)
+			? this.squareFromPoint(e.clientX, e.clientY)
+			: null;
+		this.cancelDrag();
+
+		if (g.moved) {
+			// po opravdovém tažení nechceme, aby dorazivší "click" zopakoval akci
+			this._suppressClick = true;
+			this.later(() => { this._suppressClick = false; }, 400);
+			if (target && target !== g.from && g.legal.has(target)) {
+				this.tryMove(g.from, target); // vybere promoci / vyhodnotí tah
+			} else {
+				this.selected = null; // pustil mimo legální pole → zruš výběr
+				this.renderPieces();
+			}
+			return;
+		}
+
+		// bez pohybu = obyčejné ťuknutí: chovej se jako klik na figuru
+		this._suppressClick = true;
+		this.later(() => { this._suppressClick = false; }, 400);
+		if (g.prevSelected === g.from) {
+			this.selected = null; // druhé ťuknutí na tutéž figuru = odznačit
+		} else {
+			this.selected = g.from; // vyber figuru (cílová pole už svítí)
+		}
+		this.renderPieces();
+	}
+
+	// úklid stavu tažení (ghost, zvýraznění, pointer capture) – bez logiky tahu
+	cancelDrag() {
+		const g = this._drag;
+		if (!g) return;
+		this._drag = null;
+		try { this.elBoard.releasePointerCapture(g.pointerId); } catch (_) {}
+		if (g.ghost) g.ghost.remove();
+		if (this.elSquares[g.from]) this.elSquares[g.from].removeClass("lbt-dragging");
+		if (g.over && this.elSquares[g.over]) this.elSquares[g.over].removeClass("lbt-drag-over");
+	}
+
 	// nápověda: 1. klik = figura, 2. klik = šipka, 3. klik = tah se zahraje
 	bumpHint() {
 		if (this.status !== "playing" || this.locked) return;
@@ -3088,6 +3236,11 @@ class BoardWidget {
 	}
 
 	onBoardClick(e) {
+		// klik, který vygeneroval prohlížeč po dokončeném tažení, ignoruj
+		if (this._suppressClick) {
+			this._suppressClick = false;
+			return;
+		}
 		if (this.nextMsg) {
 			this.nextMsg = null;
 			this.renderFeedback();

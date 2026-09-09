@@ -59,6 +59,8 @@
 	-webkit-user-select: none;
 	user-select: none;
 	-webkit-touch-callout: none;
+	/* aby tažení prstem nescrollovalo stránkou */
+	touch-action: none;
 }
 
 /* jemný rámeček, ať je průhledná deska čitelná na libovolném pozadí */
@@ -159,6 +161,37 @@
 
 .lbt-sq.lbt-good { box-shadow: inset 0 0 0 4px var(--lbt-good); }
 .lbt-sq.lbt-bad { box-shadow: inset 0 0 0 4px var(--lbt-bad); }
+
+/* ------- tažení figur ------- */
+/* zdrojové pole: figura zůstane "ležet" zeslabená, v ruce nese ghost */
+.lbt-sq.lbt-dragging .lbt-piece { opacity: 0.25; }
+/* pole pod kurzorem během tažení (jen legální cíl) */
+.lbt-sq.lbt-drag-over { box-shadow: inset 0 0 0 4px var(--lbt-good, #3fb950); }
+
+/* figura nesená v ruce – volně nad deskou, neblokuje zásahy myší */
+.lbt-drag-ghost {
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: 20;
+	pointer-events: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	will-change: transform;
+	cursor: grabbing;
+	filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+}
+.lbt-drag-ghost svg { width: 100%; height: 100%; display: block; }
+.lbt-drag-ghost.lbt-uni { line-height: 1; }
+.lbt-drag-ghost.lbt-uni-w {
+	color: #f7f7f7;
+	text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 1px #000;
+}
+.lbt-drag-ghost.lbt-uni-b {
+	color: #1c1c1c;
+	text-shadow: 0 0 2px rgba(255, 255, 255, 0.6);
+}
 
 /* souřadnice a–h / 1–8 – vlastní vrstva, needituje se při překreslení figur */
 .lbt-coords {

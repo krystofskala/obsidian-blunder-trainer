@@ -102,6 +102,7 @@ const DEFAULT_SETTINGS = {
 	lichessToken: "", // Lichess API token – použije se u puzzle bloků automaticky
 	showCoordinates: true, // popisky a–h / 1–8 po okrajích desky
 	srsEnabled: true, // opakování chyb: blunder vyřešený s chybou se vrací, dokud ho 3× po sobě nezvládneš čistě
+	resumeQueue: true, // fronta blunderů si pamatuje vyřešené a po reloadu naskočí na první nevyřešený
 };
 
 function hexToRgbTriple(hex) {
@@ -477,13 +478,36 @@ class BoardWidget {
 	}
 	hasNext() {
 		if (this.opts.puzzleNext) return true;
-		return !!(this.queue && this.queueIndex < this.queue.length - 1);
+		return this.nextQueueIndex() !== -1;
+	}
+
+	// index dalšího nehotového blunderu ve frontě (přeskakuje __done), nebo -1
+	nextQueueIndex() {
+		if (!this.queue) return -1;
+		let i = this.queueIndex + 1;
+		while (i < this.queue.length && this.queue[i].__done) i++;
+		return i < this.queue.length ? i : -1;
+	}
+
+	// celkový počet „ostrých" blunderů ve frontě (bez SRS opakování)
+	queueTotal() {
+		return this.queue ? this.queue.filter((e) => !e.__srs).length : 0;
+	}
+
+	// pořadí aktuálního blunderu mezi „ostrými" (1-based)
+	queuePosition() {
+		let pos = 0;
+		for (let i = 0; i <= this.queueIndex && i < this.queue.length; i++) {
+			if (!this.queue[i].__srs) pos++;
+		}
+		return Math.max(1, pos);
 	}
 
 	// další blunder z fronty (JSON pole od Templater scriptu)
 	nextInQueue() {
-		if (!this.queue || this.queueIndex >= this.queue.length - 1) return;
-		const entry = this.queue[this.queueIndex + 1];
+		const ni = this.nextQueueIndex();
+		if (ni === -1) return;
+		const entry = this.queue[ni];
 		let no;
 		try {
 			no = optsFromConfig(entry);
@@ -494,7 +518,7 @@ class BoardWidget {
 		}
 		no.view = this.view;
 		no.queue = this.queue;
-		no.queueIndex = this.queueIndex + 1;
+		no.queueIndex = ni;
 		no.onResult = this.opts.onResult;
 		this.opts = no;
 		this.reset(true);
@@ -632,8 +656,8 @@ class BoardWidget {
 			label = "🔁 Opakování chyby";
 			const st = cur.__srsStreak || 0;
 			label += " · " + Math.min(st, SRS_GRADUATE) + "/" + SRS_GRADUATE + " čistě";
-		} else if (this.queue && this.queue.length > 1) {
-			label = "♟ Blunder " + (this.queueIndex + 1) + "/" + this.queue.length;
+		} else if (this.queue && this.queueTotal() > 1) {
+			label = "♟ Blunder " + this.queuePosition() + "/" + this.queueTotal();
 		} else {
 			label = "♟ Blunder z Lichess partie";
 		}
@@ -851,11 +875,11 @@ class BoardWidget {
 					() => this.loadNextPuzzle(),
 					this.loadingNext
 				);
-			} else if (this.queue && this.queue.length > 1) {
-				if (this.queueIndex < this.queue.length - 1) {
+			} else if (this.queue && this.queueTotal() > 1) {
+				if (this.hasNext()) {
 					btn("▶ Další blunder", "lbt-btn-next", () => this.nextInQueue());
 				} else {
-					btn("✓ Hotovo (" + this.queue.length + ")", "", null, true);
+					btn("✓ Hotovo (" + this.queueTotal() + ")", "", null, true);
 				}
 			}
 			btn("⟲ začátek", "", () => this.reviewGoto(0));
@@ -1303,6 +1327,8 @@ class BoardWidget {
 		if (!this.queue) return; // SRS jede jen nad frontou blunderů
 		this.resultReported = true;
 		const cfg = this.queue[this.queueIndex];
+		// v rámci session hned označ za hotové, ať „▶ Další" tenhle přeskočí
+		if (solved && cfg && !cfg.__srs) cfg.__done = true;
 		try {
 			this.opts.onResult(cfg, {
 				solved: !!solved,
@@ -1383,6 +1409,20 @@ function srsPickCfg(cfg) {
 	return out;
 }
 
+// Stabilní identifikátor jedné úlohy napříč reloady. Templater dává `key`
+// ("gameId:ply"); jinak zkusíme URL, pak moves+ply, pak FEN+řešení.
+function blunderKey(cfg) {
+	if (!cfg) return null;
+	if (cfg.key) return String(cfg.key);
+	if (cfg.url) return String(cfg.url);
+	if (cfg.moves && cfg.ply !== undefined) return String(cfg.moves).trim() + "#" + cfg.ply;
+	if (cfg.fen) return "fen:" + cfg.fen + "|" + (cfg.solution || cfg.line || "");
+	return null;
+}
+
+const PROGRESS_MAX = 1500; // strop záznamů ve __progress
+const PROGRESS_TTL = 150 * 24 * 3600 * 1000; // a max stáří (ms)
+
 // náhodný interval do dalšího zopakování; s rostoucí sérií se roztahuje
 function srsInterval(streak) {
 	const H = 3600 * 1000;
@@ -1396,6 +1436,8 @@ class LichessBlunderTrainer extends Plugin {
 		const data = (await this.loadData()) || {};
 		this.srs = data.__srs && typeof data.__srs === "object" ? data.__srs : {};
 		delete data.__srs;
+		this.progress = data.__progress && typeof data.__progress === "object" ? data.__progress : {};
+		delete data.__progress;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
 		this.liveWidgets = new Set(); // { widget, cfg } pro živé překreslení
 
@@ -1436,10 +1478,43 @@ class LichessBlunderTrainer extends Plugin {
 						const queue = (Array.isArray(parsed) ? parsed : [parsed]).map(lcKeys);
 						if (!queue.length) throw new Error("Prázdný seznam blunderů.");
 						this.injectSrsRepeats(queue);
-						opts = optsFromConfig(queue[0]);
-						opts.queue = queue;
-						opts.queueIndex = 0;
-						opts.onResult = (cfg, outcome) => this.srsRecord(cfg, outcome);
+
+						// (znovu)sestav desku z fronty: vyřešené (mimo SRS opakování)
+						// přeskoč a naskoč na první nehotový. Když jsou hotové všechny,
+						// ukaž místo desky panel „projít znovu".
+						const mountQueue = () => {
+							if (entry.widget) { entry.widget.destroy(); entry.widget = null; }
+							el.empty();
+							try {
+								for (const e of queue) e.__done = !e.__srs && this.isBlunderDone(e);
+								let start = 0;
+								while (start < queue.length && queue[start].__done) start++;
+								if (start >= queue.length) {
+									this.renderAllDone(el, queue, () => {
+										this.forgetProgressFor(queue);
+										mountQueue();
+									});
+									return;
+								}
+								const o = optsFromConfig(queue[start]);
+								o.queue = queue;
+								o.queueIndex = start;
+								o.onResult = (c, oc) => {
+									this.recordProgress(c, oc);
+									this.srsRecord(c, oc);
+								};
+								o.view = resolveView(this.settings, cfg);
+								entry.widget = new BoardWidget(el, o);
+							} catch (e) {
+								el.empty();
+								el.createDiv({
+									cls: "lbt lbt-error",
+									text: "Lichess Blunder Trainer: " + (e && e.message ? e.message : String(e)),
+								});
+							}
+						};
+						mountQueue();
+						return;
 					} else {
 						opts = optsFromConfig(cfg);
 					}
@@ -1457,7 +1532,65 @@ class LichessBlunderTrainer extends Plugin {
 	}
 
 	async persist() {
-		await this.saveData(Object.assign({}, this.settings, { __srs: this.srs }));
+		await this.saveData(Object.assign({}, this.settings, { __srs: this.srs, __progress: this.progress }));
+	}
+
+	/* ---- postup frontou (které blundery už mám hotové) ---- */
+
+	isBlunderDone(cfg) {
+		if (this.settings.resumeQueue === false) return false;
+		const k = blunderKey(cfg);
+		return !!(k && this.progress && this.progress[k]);
+	}
+
+	recordProgress(cfg, outcome) {
+		if (this.settings.resumeQueue === false) return;
+		if (!outcome || !outcome.solved) return;
+		const k = blunderKey(cfg);
+		if (!k) return;
+		if (!this.progress[k]) this.progress[k] = Date.now();
+		this.pruneProgress();
+		this.persist();
+	}
+
+	// „projít znovu" – zapomene hotové pro konkrétní seznam
+	forgetProgressFor(queue) {
+		let changed = false;
+		for (const c of queue || []) {
+			const k = blunderKey(c);
+			if (k && this.progress[k]) { delete this.progress[k]; changed = true; }
+		}
+		if (changed) this.persist();
+	}
+
+	// panel místo desky, když jsou všechny blundery ze seznamu hotové
+	renderAllDone(el, queue, onReplay) {
+		const total = queue.filter((e) => !e.__srs).length;
+		const box = el.createDiv({ cls: "lbt lbt-alldone" });
+		box.createDiv({
+			cls: "lbt-title",
+			text: "✅ Hotovo — všech " + total + " blunderů z tohoto seznamu máš vyřešených.",
+		});
+		box.createDiv({
+			cls: "lbt-feedback is-info",
+			text: "Nové přijdou v další denní poznámce. Chyby, které sis pokazil, se vrátí přes Opakování chyb.",
+		});
+		const controls = box.createDiv({ cls: "lbt-controls" });
+		const b = controls.createEl("button", { cls: "lbt-btn lbt-btn-next", text: "↻ Projít znovu" });
+		b.addEventListener("click", () => onReplay());
+	}
+
+	pruneProgress() {
+		const cutoff = Date.now() - PROGRESS_TTL;
+		let ents = Object.entries(this.progress)
+			.filter(([, t]) => typeof t === "number" && t >= cutoff);
+		if (ents.length > PROGRESS_MAX) {
+			ents.sort((a, b) => b[1] - a[1]);
+			ents = ents.slice(0, PROGRESS_MAX);
+		}
+		if (ents.length !== Object.keys(this.progress).length) {
+			this.progress = Object.fromEntries(ents);
+		}
 	}
 
 	async saveSettings() {
@@ -1590,6 +1723,34 @@ class LbtSettingTab extends PluginSettingTab {
 				.addButton((b) =>
 					b.setButtonText("Vymazat").setWarning().onClick(async () => {
 						this.plugin.srs = {};
+						await this.plugin.persist();
+						this.display();
+					})
+				);
+		}
+
+		const doneCount = Object.keys(this.plugin.progress || {}).length;
+		new Setting(containerEl)
+			.setName("Pokračovat ve frontě")
+			.setDesc(
+				"Seznam blunderů (např. v denní poznámce) si pamatuje, které už máš " +
+					"vyřešené. Po znovunačtení poznámky naskočí na první nevyřešený, ne od začátku. " +
+					"Uloženo hotových: " + doneCount + "."
+			)
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.resumeQueue !== false).onChange(async (v) => {
+					this.plugin.settings.resumeQueue = v;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		if (doneCount > 0) {
+			new Setting(containerEl)
+				.setName("Zapomenout vyřešené blundery")
+				.setDesc("Smaže historii " + doneCount + " vyřešených. Všechny seznamy pak zase začnou od začátku.")
+				.addButton((b) =>
+					b.setButtonText("Zapomenout").setWarning().onClick(async () => {
+						this.plugin.progress = {};
 						await this.plugin.persist();
 						this.display();
 					})

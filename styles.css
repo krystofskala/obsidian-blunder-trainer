@@ -309,3 +309,11 @@
 	font-size: var(--font-ui-smaller);
 	line-height: 1.5;
 }
+
+/* panel „vše hotovo" místo desky */
+.lbt-alldone {
+	padding: 0.8em 1em;
+	border-radius: 6px;
+	background: var(--background-secondary);
+}
+.lbt-alldone .lbt-controls { margin-top: 0.6em; }
